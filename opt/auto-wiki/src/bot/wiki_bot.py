@@ -1,14 +1,15 @@
 # /opt/auto-wiki/src/bot/wiki_bot.py
-# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.2)
-# 目的: 記事の検索・吟味・画像選定・執筆・レビュー・リンク生成・投稿のワークフロー制御
+# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.3 - Deep Research搭載)
+# 目的: 記事の調査(Deep)・吟味・画像・執筆・レビュー・リンク生成・投稿のワークフロー制御
 
 import os
 import mwclient
 from openai import OpenAI
-from duckduckgo_search import DDGS
+# from duckduckgo_search import DDGS  <-- 削除またはコメントアウト
 from src.bot.commons import CommonsAgent
 from src.bot.vetter import InformationVetter
-from src.bot.reviewer import ArticleReviewer  # 追加
+from src.bot.reviewer import ArticleReviewer
+from src.bot.researcher import DeepResearcher # 追加
 from src.rag.vector_store import WikiVectorDB
 
 class LocalWikiBotV2:
@@ -28,35 +29,43 @@ class LocalWikiBotV2:
         self.model_name = model_name
         
         # 3. エージェント初期化
-        self.ddgs = DDGS()
+        # self.ddgs = DDGS() <-- Researcherに移行するため削除
+        self.researcher = DeepResearcher(self.client, model_name, lang=lang) # 追加
         self.commons = CommonsAgent(self.client, model_name)
         self.vetter = InformationVetter(self.client, model_name, lang=lang)
-        self.reviewer = ArticleReviewer(self.client, model_name, lang=lang) # 追加
+        self.reviewer = ArticleReviewer(self.client, model_name, lang=lang)
         self.vector_db = WikiVectorDB()
 
     def update_article(self, topic: str):
         """
-        記事のライフサイクル管理: 検索 -> 吟味 -> 画像 -> 執筆 -> [レビュー&修正] -> [内部リンク] -> 投稿
+        記事のライフサイクル管理: 
+        DeepResearch -> Vetting -> Image -> Writing -> Review -> Linking -> Publish
         """
         print(f"\n📘 Processing Topic ({self.lang}): {topic}")
 
-        # --- Phase 1: Discovery & Research ---
+        # --- Phase 1: Deep Discovery & Research (深層調査) ---
+        # 単純な検索ではなく、サブトピックを含めた調査を実行
         try:
-            region = "jp-jp" if self.lang == "ja" else "us-en"
-            raw_results = self.ddgs.text(topic, region=region, max_results=10)
+            # Note: Researcher内で整形済みのテキストが返ってくる
+            raw_research_text = self.researcher.conduct_deep_research(topic)
         except Exception as e:
-            print(f"❌ Search failed: {e}")
+            print(f"❌ Research phase failed: {e}")
             return
 
-        if not raw_results:
-            print("❌ No search results found.")
+        if not raw_research_text:
+            print("❌ No research results found.")
             return
 
         # --- Phase 2: Vetting (情報の吟味) ---
-        vetted_info = self.vetter.vet_search_results(topic, raw_results)
-        if not vetted_info:
-            print("⚠️ All information was rejected by Vetting Agent.")
-            return
+        # Note: Researcherの出力はテキスト形式なので、Vetterには少し加工して渡すか、
+        # あるいはVetter自体を「テキストベースの要約」モードで使う。
+        # ここでは既存のVetterロジック（リストを受け取る前提）を維持するため、簡易リスト化するか、
+        # あるいはVetterをスキップしてResearcherの出力を信じる手もあるが、
+        # ここでは「検索結果テキスト」をそのまま使う形にVetterを経由せず直接渡すフローに変更（Researcherが信頼性フィルタも兼ねているため）
+        
+        # ただし、元の設計思想「吟味」を残すなら、Researcherの結果をLLMに「Wikiに使える情報だけ抽出して」と頼むのがベスト。
+        # 今回はResearcherが既にフィルタリングしているので、この情報を Trusted Sources とする。
+        vetted_info = raw_research_text 
         
         # --- Phase 3: Media Enrichment (画像選定) ---
         image_instruction = ""
@@ -90,40 +99,36 @@ class LocalWikiBotV2:
             print(f"❌ Generation failed: {e}")
             return
 
-        # --- Phase 4.5: Review & Refine (レビューと修正) [NEW] ---
+        # --- Phase 4.5: Review & Refine (レビューと修正) ---
         if "NO_CHANGE" not in draft_text:
+            # vetted_info (raw_research_text) をソースとして渡してレビュー
             is_approved, feedback = self.reviewer.review_draft(topic, draft_text, vetted_info)
             if not is_approved:
-                # 修正指示に基づいてリライト
                 draft_text = self.reviewer.refine_draft(topic, draft_text, feedback)
 
-        # --- Phase 4.6: Internal Linking (内部リンク生成) [NEW] ---
+        # --- Phase 4.6: Internal Linking (内部リンク生成) ---
         if "NO_CHANGE" not in draft_text:
             try:
                 see_also = self._generate_see_also(topic)
                 if see_also:
-                    # 既存の "== 関連項目 ==" があれば避けるなどの処理が理想だが、簡易的に末尾追記
                     draft_text += f"\n\n{see_also}"
             except Exception as e:
                 print(f"⚠️ Internal linking failed: {e}")
 
         # --- Phase 5: Publishing (投稿) ---
         if "NO_CHANGE" not in draft_text and len(draft_text) > 50:
-            summary = "Auto-update via Local LLM (Reviewed)"
+            summary = "Auto-update via Local LLM (Deep Research & Reviewed)"
             final_text = draft_text.replace("```wikitext", "").replace("```", "")
             
-            # 保存
             page.save(final_text, summary=summary)
             print("✅ Article saved successfully.")
             
-            # ベクトルDBも更新
             self.vector_db.upsert_article(topic, final_text)
         else:
             print("⏹️  No significant changes generated.")
 
     def _generate_see_also(self, topic: str) -> str:
         """関連する既存記事へのリンク集を生成する"""
-        print("🔗 Generating internal links...")
         try:
             results = self.vector_db.search(topic, n_results=5)
             if not results or not results['ids']: return ""
@@ -136,7 +141,7 @@ class LocalWikiBotV2:
                     related_topics.append(f"* [[{related_id}]]")
             
             if not related_topics: return ""
-            related_topics = list(set(related_topics)) # 重複排除
+            related_topics = list(set(related_topics))
 
             header = "== 関連項目 ==" if self.lang == "ja" else "== See Also =="
             return f"{header}\n" + "\n".join(related_topics)
@@ -158,7 +163,7 @@ class LocalWikiBotV2:
         data_section = f"""
         # Target Topic
         {topic}
-        # Trusted Sources
+        # Trusted Sources (Based on Deep Research)
         {info}
         # Image Instructions
         {image_inst}
@@ -170,7 +175,6 @@ class LocalWikiBotV2:
         if policy:
             return f"{policy}\n\n{data_section}\n\nOutput the full updated article in Wikitext format."
 
-        # デフォルトポリシー
         if self.lang == "en":
             return f"""
             You are an expert Wikipedia editor.
