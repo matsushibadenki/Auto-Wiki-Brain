@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # /opt/auto-wiki/maintenance/factory_reset.sh
-# システム初期化（ファクトリーリセット）スクリプト (Fixed: Aggressive Cleanup)
+# システム初期化（ファクトリーリセット）スクリプト (Fixed: Permission & Empty Check)
 # 目的: 蓄積された記事・ベクトルデータ・設定を削除し、インストール直後の状態に戻す
 # オプション: --all をつけるとAIモデル(Ollama)も削除する
 
@@ -37,16 +37,15 @@ if [ "$confirm" != "yes" ]; then
 fi
 
 # 1. サービスの停止とボリューム削除
-echo -e "\n${YELLOW}🛑 Stopping services and removing volumes...${NC}"
-# -v: 匿名ボリュームを削除
-# --remove-orphans: 定義されていないコンテナも削除
+echo -e "\n${YELLOW}🛑 Stopping services...${NC}"
 docker compose down -v --remove-orphans
 
-# 2. データの物理削除
-echo -e "${YELLOW}🗑️  Deleting data directories...${NC}"
+# 2. データの削除と環境整備
+echo -e "${YELLOW}🗑️  Resetting data directories...${NC}"
 
-# 削除対象のディレクトリ（物理的に削除する）
-dirs_to_delete=(
+# リセット対象のディレクトリ
+# ここにあるディレクトリは「空っぽ」かつ「書き込み可能」でなければならない
+dirs_to_reset=(
     "data/mediawiki_db"
     "data/mediawiki_html_ja"
     "data/mediawiki_images_ja"
@@ -57,26 +56,40 @@ dirs_to_delete=(
     "data/inputs/processed"
 )
 
-# 削除対象のファイル
-files_to_delete=(
+# リセット対象のファイル（DBファイル）
+files_to_reset=(
     "data/scheduler_ja.db"
     "data/scheduler_en.db"
 )
 
-# ディレクトリの削除
-for dir in "${dirs_to_delete[@]}"; do
+# ディレクトリの処理
+for dir in "${dirs_to_reset[@]}"; do
     if [ -d "$dir" ]; then
-        echo "   - Deleting: $dir"
+        echo "   - Cleaning: $dir"
+        # フォルダごと消して作り直すのが最も確実
         sudo rm -rf "$dir"
     fi
+    
+    # 再作成
+    mkdir -p "$dir"
+    
+    # [重要] 権限を777にしてDockerコンテナからの書き込みを許可する
+    chmod 777 "$dir"
+    
+    # [重要] Mac等で自動生成される隠しファイル(.DS_Store等)を念のため削除
+    # フォルダが空でないとMediaWikiは初期化をスキップしてしまうため
+    rm -rf "$dir"/.* 2>/dev/null || true
 done
 
-# ファイルの削除
-for file in "${files_to_delete[@]}"; do
+# ファイルの処理
+for file in "${files_to_reset[@]}"; do
     if [ -e "$file" ]; then
-        echo "   - Deleting: $file"
         sudo rm -rf "$file"
     fi
+    # ディレクトリではなくファイルとして作成
+    echo "   - Recreating empty DB file: $file"
+    touch "$file"
+    chmod 666 "$file"
 done
 
 # AIモデルの削除
@@ -87,27 +100,13 @@ if [ "$DELETE_MODELS" = true ]; then
     fi
 fi
 
-# 3. 再作成（Docker誤認防止）
-echo -e "${YELLOW}✨ Preparing empty files for Docker...${NC}"
-
-# DBファイルを空ファイルとして作成（ディレクトリ化防止）
-touch data/scheduler_ja.db
-touch data/scheduler_en.db
-chmod 666 data/scheduler_ja.db data/scheduler_en.db
-
-# inputsディレクトリの作成
-mkdir -p data/inputs/processed
-chmod 777 data/inputs/processed
-
 echo -e "${GREEN}✅ Reset Complete.${NC}"
 echo ""
 
-# 4. 再セットアップの案内
+# 3. 再セットアップの案内
 read -p "Do you want to run setup.sh now to reinstall? (y/N): " run_setup
 if [[ "$run_setup" =~ ^[yY] ]]; then
     echo -e "\n${YELLOW}🚀 Starting setup...${NC}"
-    
-    # setup.shの実行
     ./setup.sh
 else
     echo -e "\nSystem is reset. Run './setup.sh' when you are ready to start again."
