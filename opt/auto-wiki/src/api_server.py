@@ -33,7 +33,7 @@ llm_client = OpenAI(base_url=OLLAMA_HOST, api_key="ollama")
 
 SYSTEM_LANG = os.getenv("WIKI_LANG", "ja")
 
-# 翻訳辞書 (省略せず保持)
+# 翻訳辞書
 TRANSLATIONS = {
     "ja": {
         "title": "Auto-Wiki Brain 管理パネル",
@@ -145,7 +145,7 @@ def add_manual_task(task: TaskCreate, username: str = Depends(get_current_userna
     scheduler.add_or_update_task(task.topic, priority=task.priority)
     return {"message": f"Task '{task.topic}' added successfully."}
 
-# --- 追加: タスク削除エンドポイント ---
+# --- タスク削除エンドポイント ---
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int, username: str = Depends(get_current_username)):
     try:
@@ -162,7 +162,6 @@ def get_bot_logs(username: str = Depends(get_current_username)):
     if os.path.exists(log_path):
         try:
             with open(log_path, "r", encoding="utf-8") as f:
-                # 最後の30行を取得して新しい順に並べる
                 lines = f.readlines()
                 logs = [line.strip() for line in lines[-30:]]
                 logs.reverse() 
