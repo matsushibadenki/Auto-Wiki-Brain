@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # /opt/auto-wiki/maintenance/factory_reset.sh
-# システム初期化（ファクトリーリセット）スクリプト (Fixed: Permission & 404 Error Robustness)
+# システム初期化（ファクトリーリセット）スクリプト (Fixed: Aggressive Cleanup)
 # 目的: 蓄積された記事・ベクトルデータ・設定を削除し、インストール直後の状態に戻す
 # オプション: --all をつけるとAIモデル(Ollama)も削除する
 
@@ -36,18 +36,17 @@ if [ "$confirm" != "yes" ]; then
     exit 0
 fi
 
-# 1. サービスの停止
-echo -e "\n${YELLOW}🛑 Stopping services...${NC}"
-docker compose down -v
-# -v オプションでDocker管理下のボリュームも削除
+# 1. サービスの停止とボリューム削除
+echo -e "\n${YELLOW}🛑 Stopping services and removing volumes...${NC}"
+# -v: 匿名ボリュームを削除
+# --remove-orphans: 定義されていないコンテナも削除
+docker compose down -v --remove-orphans
 
-# 2. データの削除と再作成
-echo -e "${YELLOW}🗑️  Resetting data directories...${NC}"
+# 2. データの物理削除
+echo -e "${YELLOW}🗑️  Deleting data directories...${NC}"
 
-# リセット対象のディレクトリ
-# 注意: ディレクトリ自体を削除・再作成するとDockerのマウント整合性が崩れることがあるため、
-# 可能な限り「中身を空にする」処理を行う。
-dirs_to_reset=(
+# 削除対象のディレクトリ（物理的に削除する）
+dirs_to_delete=(
     "data/mediawiki_db"
     "data/mediawiki_html_ja"
     "data/mediawiki_images_ja"
@@ -58,38 +57,26 @@ dirs_to_reset=(
     "data/inputs/processed"
 )
 
-# リセット対象のファイル
-# Dockerが誤ってディレクトリとしてマウントするのを防ぐため、明示的にファイルとして再作成が必要
-files_to_reset=(
+# 削除対象のファイル
+files_to_delete=(
     "data/scheduler_ja.db"
     "data/scheduler_en.db"
 )
 
-# ディレクトリの処理
-for dir in "${dirs_to_reset[@]}"; do
-    if [ ! -d "$dir" ]; then
-        echo "   - Creating directory: $dir"
-        mkdir -p -m 777 "$dir"
-    else
-        echo "   - Cleaning directory: $dir"
-        # フォルダ自体は残し、中身（隠しファイル含む）を全て削除する
-        # find -mindepth 1 -delete は確実で高速
-        sudo find "$dir" -mindepth 1 -delete 2>/dev/null || true
+# ディレクトリの削除
+for dir in "${dirs_to_delete[@]}"; do
+    if [ -d "$dir" ]; then
+        echo "   - Deleting: $dir"
+        sudo rm -rf "$dir"
     fi
-    # 権限を確実に777（誰でも書き込み可）にする
-    chmod 777 "$dir"
 done
 
-# ファイルの処理
-for file in "${files_to_reset[@]}"; do
+# ファイルの削除
+for file in "${files_to_delete[@]}"; do
     if [ -e "$file" ]; then
-        echo "   - Removing existing path: $file"
+        echo "   - Deleting: $file"
         sudo rm -rf "$file"
     fi
-    # 空ファイルを作成し、書き込み権限を与える
-    echo "   - Recreating empty file: $file"
-    touch "$file"
-    chmod 666 "$file"
 done
 
 # AIモデルの削除
@@ -100,13 +87,27 @@ if [ "$DELETE_MODELS" = true ]; then
     fi
 fi
 
+# 3. 再作成（Docker誤認防止）
+echo -e "${YELLOW}✨ Preparing empty files for Docker...${NC}"
+
+# DBファイルを空ファイルとして作成（ディレクトリ化防止）
+touch data/scheduler_ja.db
+touch data/scheduler_en.db
+chmod 666 data/scheduler_ja.db data/scheduler_en.db
+
+# inputsディレクトリの作成
+mkdir -p data/inputs/processed
+chmod 777 data/inputs/processed
+
 echo -e "${GREEN}✅ Reset Complete.${NC}"
 echo ""
 
-# 3. 再セットアップの案内
+# 4. 再セットアップの案内
 read -p "Do you want to run setup.sh now to reinstall? (y/N): " run_setup
 if [[ "$run_setup" =~ ^[yY] ]]; then
     echo -e "\n${YELLOW}🚀 Starting setup...${NC}"
+    
+    # setup.shの実行
     ./setup.sh
 else
     echo -e "\nSystem is reset. Run './setup.sh' when you are ready to start again."
