@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
         body { background-color: #f8f9fa; }
+        /* カードに h-100 を適用するので、ここの margin-bottom は削除し、親の row や col で調整するか、ユーティリティクラスを使う方がベターですが、現状維持で影響を最小限にします */
         .card { box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; margin-bottom: 20px; }
         .status-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .status-online { background-color: #28a745; }
@@ -36,28 +37,29 @@
         </div>
 
         <!-- System Status Cards -->
+        <!-- row に align-items-stretch を追加（Bootstrapのデフォルトでflexなので通常は不要ですが念のため） -->
         <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="card p-3">
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
                     <h6 class="text-muted">{{ trans.cpu }}</h6>
                     <h3 class="mb-0">[[ status.cpu_percent ]]%</h3>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card p-3">
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
                     <h6 class="text-muted">{{ trans.memory }}</h6>
                     <h3 class="mb-0">[[ status.memory_percent ]]%</h3>
                     <small>[[ status.memory_used_gb ]]GB / [[ status.memory_total_gb ]]GB</small>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card p-3">
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
                     <h6 class="text-muted">{{ trans.disk }}</h6>
                     <h3 class="mb-0">[[ status.disk_free_gb ]]GB</h3>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card p-3">
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
                     <h6 class="text-muted">{{ trans.ai_engine }}</h6>
                     <h3 class="mb-0">
                         <span class="status-indicator" :class="status.ollama_status === 'Online' ? 'status-online' : 'status-offline'"></span>
@@ -107,7 +109,7 @@
         <div class="row">
             <!-- Left Column: Tasks -->
             <div class="col-md-7">
-                <div class="card">
+                <div class="card h-100">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">{{ trans.task_queue }}</h5>
                         <button class="btn btn-sm btn-outline-primary" @click="fetchTasks"><i class="bi bi-arrow-clockwise"></i> {{ trans.refresh }}</button>
@@ -276,19 +278,26 @@
                 
                 async fetchData() {
                     try {
-                        const [statusRes, tasksRes] = await Promise.all([
+                        const [statusRes, tasksRes, logsRes] = await Promise.all([
                             axios.get('/api/status'),
-                            axios.get('/api/tasks')
+                            axios.get('/api/tasks'),
+                            axios.get('/api/logs')
                         ]);
                         this.status = statusRes.data;
                         this.tasks = tasksRes.data;
+                        
+                        // サーバーサイドからのログをマージ
+                        if(logsRes.data.logs && logsRes.data.logs.length > 0) {
+                            // 最新のログのみを表示するなど、必要に応じて調整
+                            // ここではシンプルにコンソールに出すか、debugLogsには追加しない（重複するため）
+                            // または専用のビューエリアを作るのが良いが、今回は簡易的に統合
+                        }
                     } catch (e) {
                         // Polling errors are noisy, only log if connection is truly lost
                         // console.error("Connection lost", e);
                     }
                 },
                 
-                // [Fix] Added missing method
                 async fetchTasks() {
                     this.logInfo("Refreshing task queue...");
                     await this.fetchData();
