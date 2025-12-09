@@ -105,6 +105,8 @@ chmod \+x setup.sh manager.sh
 * **起動**: docker compose up \-d  
 * **停止**: docker compose down  
 * **Botログ確認**: docker compose logs \-f wiki-bot-ja
+* **再起動日本語環境**: docker compose restart wiki-bot-ja
+* **再起動英語環境**: docker compose restart wiki-bot-en
 
 ## **5\. ローカル知識の学習 (Local RAG)**
 
