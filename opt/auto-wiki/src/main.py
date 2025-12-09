@@ -19,7 +19,7 @@ from src.rag.file_ingestor import LocalFileIngestor
 class DualLogger(object):
     def __init__(self):
         self.terminal = sys.stdout
-        self.log = open("/app/src/bot.log", "a", encoding="utf-8")
+        self.log = open("/app/log/bot.log", "a", encoding="utf-8")
     
     def write(self, message):
         self.terminal.write(message)
