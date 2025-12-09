@@ -1,13 +1,13 @@
 # /opt/auto-wiki/src/bot/wiki_bot.py
-# 日本語タイトル: 自律型Wiki Bot (Strict Writer Fix)
-# 目的: AIの「チャット化」を防ぎ、強制的に記事本文のみを出力させる
+# 日本語タイトル: 自律型Wiki Bot (Deep Writer + Strict Mode)
+# 目的: 記事を章ごとに分割執筆することで「深み」を出し、かつチャット化を厳格に防止する
 
 import os
 import mwclient
 import datetime
 import json
+import re
 from openai import OpenAI
-# ... 他のimportはそのまま ...
 from src.bot.commons import CommonsAgent
 from src.bot.vetter import InformationVetter
 from src.bot.reviewer import ArticleReviewer
@@ -15,87 +15,128 @@ from src.bot.researcher import DeepResearcher
 from src.rag.vector_store import WikiVectorDB
 
 class LocalWikiBotV2:
-    # __init__ などは変更なし (Deep Writer版またはオリジナル版を維持)
     def __init__(self, wiki_host, bot_user, bot_pass, model_name, base_url, lang="ja"):
-        print(f"🤖 Initializing WikiBot (Strict Fix / Model: {model_name})...")
+        print(f"🤖 Initializing WikiBot (Deep Writer & Strict Mode / Model: {model_name})...")
         self.lang = lang
+        
         self.site = mwclient.Site(wiki_host, path='/', scheme='http')
         try:
             self.site.login(bot_user, bot_pass)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Wiki Login Warning: {e}")
+        
         self.client = OpenAI(base_url=base_url, api_key="ollama")
         self.model_name = model_name
+        
         self.researcher = DeepResearcher(self.client, model_name, lang=lang)
         self.commons = CommonsAgent(self.client, model_name)
         self.vetter = InformationVetter(self.client, model_name, lang=lang)
         self.reviewer = ArticleReviewer(self.client, model_name, lang=lang)
         self.vector_db = WikiVectorDB()
 
-    # update_article メソッドなども変更なし...
-    # (Deep Writer版の update_article を使用している前提で、重要なヘルパーメソッドのみ書き換えます)
-
     def update_article(self, topic: str):
-        # ... (前略) ...
-        # Phase 3: Writing Process 呼び出し部分
-        print("✍️  Starting Writing Process (Strict Mode)...")
-        
-        # 既存記事があるかチェック
-        page = self.site.pages[topic]
-        old_text = page.text() if page.exists else ""
-        is_existing = page.exists
-        
-        # リサーチ結果取得 (DeepResearcher経由)
-        research_text = self.researcher.conduct_deep_research(topic)
-        if not research_text: return
+        print(f"\n📘 Processing Topic ({self.lang}): {topic}")
 
+        # --- Phase 0: 既存記事の確認 ---
+        page = self.site.pages[topic]
+        old_text = ""
+        is_existing = False
+        
+        if page.exists:
+            print(f"   ℹ️ Article '{topic}' already exists.")
+            old_text = page.text()
+            is_existing = True
+        else:
+            print(f"   🆕 Creating NEW article: {topic}")
+
+        # --- Phase 1: Deep Research ---
+        try:
+            # 調査フェーズ（ここが情報の「深さ」の源泉）
+            raw_research_text = self.researcher.conduct_deep_research(topic)
+        except Exception as e:
+            print(f"❌ Research phase failed: {e}")
+            return
+
+        if not raw_research_text:
+            print("❌ No research results found.")
+            return
+
+        # --- Phase 2: 画像選定 ---
         image_instruction = ""
-        # 画像検索ロジック (省略)
+        if not is_existing or ("[[File:" not in old_text and "[[ファイル:" not in old_text):
+            try:
+                images = self.commons.search_images(topic)
+                best_image = self.commons.select_best_image(topic, images)
+                if best_image:
+                    clean_name = best_image.replace("File:", "")
+                    image_instruction = f"[[File:{clean_name}|thumb|250px|{topic}]]"
+            except Exception:
+                pass
+
+        # --- Phase 3: Writing (執筆) ---
+        print(f"✍️  Starting Writing Process...")
+        final_text = ""
 
         if is_existing:
-            final_text = self._write_incremental(topic, old_text, research_text, image_instruction)
+            # 既存記事は構成を壊さないよう「差分追記モード」で一括処理
+            final_text = self._write_incremental(topic, old_text, raw_research_text, image_instruction)
         else:
-            # 【修正】Deep Writerモードかどうかに関わらず、ここを厳格化
-            # DeepWriter導入済みの場合は _write_deep_article を使用
-            # 未導入の場合は _build_creation_prompt を使用
-            # ここでは安全のため DeepWriterロジックに対応した修正版を提供
-            final_text = self._write_deep_article_strict(topic, research_text, image_instruction)
+            # 【重要】新規記事は「分割執筆モード」で深さを出す
+            final_text = self._write_deep_article(topic, raw_research_text, image_instruction)
 
+        # --- Phase 4: Publishing (投稿) ---
+        # 簡易チェック: 明らかにチャットっぽい応答が含まれていないか
         if final_text and len(final_text) > 50 and "Please provide" not in final_text:
-            page.save(final_text, summary="Auto-generated article.")
-            print("✅ Article published.")
+            # チャット定型文の除去（念のため）
+            final_text = self._clean_chat_artifacts(final_text)
+            
+            summary = "Created comprehensive article via Deep Writer." if not is_existing else "Updated with latest research."
+            
+            # 既存記事と完全に一致しない場合のみ保存
+            if final_text.strip() != old_text.strip():
+                page.save(final_text, summary=summary)
+                print("✅ Article published successfully.")
+                self.vector_db.upsert_article(topic, final_text)
+            else:
+                print("⏹️  No changes detected.")
         else:
-            print("❌ Output was chatty or empty. Publishing aborted.")
+            print("❌ Output was invalid or chatty. Aborted.")
 
-    def _write_deep_article_strict(self, topic: str, context: str, image_inst: str) -> str:
+    def _write_deep_article(self, topic: str, context: str, image_inst: str) -> str:
         """
-        DeepWriterのロジックに「Strict Mode」を適用
+        【分割執筆ロジック】
+        1. 構成案（目次）を作成
+        2. 各章を個別に執筆
+        3. 結合して長文記事を生成
         """
-        # Step 1: 構成案作成 (ここはLLMに任せてOK)
+        # Step 1: 構成案の作成
+        print("   📑 Generating Outline...")
         outline = self._generate_outline(topic, context)
+        print(f"   -> Sections: {outline}")
         
         full_article = ""
         
-        # 冒頭（導入部）の作成
-        # 【重要】AIに「書き出し」を考えさせず、こちらで指定する
+        # Step 2: 導入部（Lead Section）の執筆
+        # 書き出しを強制してチャット化を防ぐ
+        print("   🖊️  Writing Introduction...")
         intro = self._write_section_strict(topic, "Introduction", context, image_inst, is_intro=True)
         full_article += intro + "\n\n"
         
-        # Step 2: 各章の執筆
+        # Step 3: 各セクションの執筆
         for section in outline:
             print(f"   🖊️  Writing Section: {section}...")
             section_content = self._write_section_strict(topic, section, context, "")
             full_article += section_content + "\n\n"
             
+        # Step 4: 関連項目とカテゴリ
         full_article += self._generate_footer(topic)
+        
         return full_article
 
     def _write_section_strict(self, topic: str, section_title: str, context: str, image_inst: str, is_intro: bool = False) -> str:
         """
-        AIがチャット化するのを防ぐ厳格な執筆メソッド
+        各セクションを執筆するメソッド（Strict Mode適用）
         """
-        
-        # プロンプト汚染を防ぐため、非常に強い制約を入れる
         system_constraint = """
         [System Command]
         You are a text generation engine, NOT a chat assistant.
@@ -112,10 +153,14 @@ class LocalWikiBotV2:
             {system_constraint}
             
             Task: Write the lead section for "{topic}".
-            Input Data: {context[:5000]}
+            Input Data: {context[:6000]}
             Image Code: {image_inst}
             
-            Start the output strictly with: '''{topic}'''
+            Instruction:
+            - Start strictly with: '''{topic}'''
+            - Write 3-5 summary sentences.
+            - Insert the image code if provided.
+            - NO headings here.
             """
         else:
             # 各セクション
@@ -123,39 +168,95 @@ class LocalWikiBotV2:
             {system_constraint}
             
             Task: Write the section "{section_title}" for the article "{topic}".
-            Input Data: {context[:5000]}
+            Input Data: {context[:6000]}
             
-            Start the output strictly with: == {section_title} ==
+            Instruction:
+            - Start strictly with: == {section_title} ==
+            - Write detailed paragraphs (at least 400 characters).
+            - Use bullet points only for lists.
             """
         
         try:
             resp = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3 # 創造性を少し下げて命令順守率を上げる
+                temperature=0.3
             )
             content = resp.choices[0].message.content.strip()
             
-            # 安全装置：もしAIがまだチャットしてくる場合（"Sure, here is..."等）、強制削除
-            if "\n" in content:
-                first_line = content.split("\n")[0]
-                if "Sure" in first_line or "Here is" in first_line or "context" in first_line:
-                    print("⚠️ Detected chat filler, removing first line...")
-                    content = "\n".join(content.split("\n")[1:])
+            # Markdownコードブロックの除去
+            content = content.replace("```wikitext", "").replace("```", "")
             
             return content
         except Exception as e:
             print(f"⚠️ Section write error: {e}")
-            return ""
+            return f"== {section_title} ==\n(Content generation failed)"
 
-    # 既存のヘルパーメソッドはそのまま維持
-    def _generate_outline(self, topic, context):
-        # 前回のコード(DeepWriter)と同じ
-        return ["概要", "歴史", "特徴"] 
+    def _generate_outline(self, topic: str, context: str) -> list:
+        """記事の構成案（セクションリスト）を作成"""
+        prompt = f"""
+        List 4-6 main section titles for a Wikipedia article about "{topic}".
+        Exclude "Introduction" and "See Also".
+        Output ONLY a JSON list of strings. e.g. ["History", "Mechanism", "Impact"]
+        Context: {context[:3000]}
+        """
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
+            )
+            content = resp.choices[0].message.content
+            # JSON抽出
+            if "[" in content and "]" in content:
+                json_str = content[content.find("["):content.rfind("]")+1]
+                return json.loads(json_str)
+            return ["概要", "歴史", "特徴"]
+        except:
+            return ["概要", "歴史", "特徴"]
+
+    def _write_incremental(self, topic, old_text, context, image_inst):
+        """既存記事の追記用（一括生成）"""
+        # 既存の_build_incremental_update_promptを使用
+        prompt = self._build_incremental_update_prompt(topic, old_text, context, image_inst)
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
+            )
+            return resp.choices[0].message.content.replace("```wikitext", "").replace("```", "")
+        except:
+            return old_text
+
+    def _build_incremental_update_prompt(self, topic, old_text, info, image_inst):
+        # 既存のプロンプト構築ロジック（変更なし）
+        current_date = datetime.date.today().strftime("%Y年%m月")
+        return f"""
+        あなたはWikipedia編集者です。既存記事「{topic}」に最新情報を追記してください。
+        
+        # ルール
+        1. 既存の記事は書き換えず、維持してください。
+        2. 新しい情報のみを適切な場所に追記してください。
+        3. 全文（元のテキスト + 追記分）を出力してください。
+        
+        # 入力情報
+        {info[:5000]}
+        
+        # 現在の記事
+        {old_text}
+        """
 
     def _generate_footer(self, topic):
         return f"== 関連項目 ==\n* [[Wikipedia]]"
-
-    def _write_incremental(self, topic, old_text, context, image_inst):
-        # 既存コードと同じ
-        return "NO_CHANGE"
+    
+    def _clean_chat_artifacts(self, text):
+        """AIがつい出力してしまうチャットの残骸を除去"""
+        lines = text.split('\n')
+        clean_lines = []
+        for line in lines:
+            # "Here is the article" などを簡易的に除外
+            if "Here is" in line or "Sure," in line:
+                continue
+            clean_lines.append(line)
+        return '\n'.join(clean_lines)
