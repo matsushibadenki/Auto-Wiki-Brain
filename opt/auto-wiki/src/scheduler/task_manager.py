@@ -125,7 +125,7 @@ class WikiScheduler:
             conn.close()
             return True
 
-    # --- 追加: タスク削除メソッド ---
+    # --- タスク削除メソッド ---
     def delete_task(self, task_id: int):
         """指定されたIDのタスクを削除する"""
         conn = self._get_conn()
@@ -213,3 +213,18 @@ class WikiScheduler:
             })
         conn.close()
         return tasks
+```
+
+#### 3. 再起動と確認
+
+上記2ファイルを上書き保存した後、必ず **APIサーバー（Dashboard）を再起動** してください。これをしないと、古いコード（IDを返さないコード）が動き続けてしまいます。
+
+```bash
+docker compose restart dashboard-ja
+```
+
+その後、ブラウザをリロードして削除を試してください。今度は動くはずです。
+もしこれでも動かない場合は、`docker compose build` でイメージを作り直す必要があるかもしれません（Pythonコードがキャッシュされている可能性があるため）。
+
+```bash
+docker compose up -d --build dashboard-ja
