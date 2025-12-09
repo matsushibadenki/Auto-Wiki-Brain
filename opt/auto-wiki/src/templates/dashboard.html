@@ -13,6 +13,12 @@
         .status-online { background-color: #28a745; }
         .status-offline { background-color: #dc3545; }
         .status-running { background-color: #ffc107; }
+        /* Chat Styles */
+        .chat-box { height: 300px; overflow-y: auto; background-color: #f1f3f5; border-radius: 5px; padding: 10px; }
+        .chat-msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 15px; max-width: 80%; }
+        .msg-user { background-color: #007bff; color: white; margin-left: auto; }
+        .msg-bot { background-color: #e9ecef; color: black; margin-right: auto; }
+        .source-badge { font-size: 0.7em; opacity: 0.7; display: block; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -33,7 +39,6 @@
                 <div class="card p-3">
                     <h6 class="text-muted">{{ trans.memory }}</h6>
                     <h3 class="mb-0">[[ status.memory_percent ]]%</h3>
-                    <small>[[ status.memory_used_gb ]]GB / [[ status.memory_total_gb ]]GB</small>
                 </div>
             </div>
             <div class="col-md-3">
@@ -54,7 +59,7 @@
         </div>
 
         <div class="row">
-            <div class="col-md-8">
+            <div class="col-md-7">
                 <div class="card">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">{{ trans.task_queue }}</h5>
@@ -67,7 +72,6 @@
                                     <th>{{ trans.col_topic }}</th>
                                     <th>{{ trans.col_priority }}</th>
                                     <th>{{ trans.col_status }}</th>
-                                    <th>{{ trans.col_next }}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -87,10 +91,6 @@
                                             [[ task.status ]]
                                         </span>
                                     </td>
-                                    <td>[[ task.next_run ]]</td>
-                                </tr>
-                                <tr v-if="tasks.length === 0">
-                                    <td colspan="4" class="text-center text-muted py-3">{{ trans.no_tasks }}</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -98,37 +98,48 @@
                 </div>
             </div>
 
-            <div class="col-md-4">
-                <div class="card">
+            <div class="col-md-5">
+                <div class="card mb-3">
                     <div class="card-header bg-white">
                         <h5 class="mb-0">{{ trans.manual_task }}</h5>
                     </div>
                     <div class="card-body">
-                        <div class="mb-3">
-                            <label class="form-label">{{ trans.label_topic }}</label>
+                        <div class="input-group">
                             <input type="text" class="form-control" v-model="newTaskTopic" placeholder="{{ trans.placeholder_topic }}" @keyup.enter="addTask">
+                            <button class="btn btn-primary" @click="addTask" :disabled="!newTaskTopic">
+                                <i class="bi bi-plus-lg"></i>
+                            </button>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label">{{ trans.label_priority }}</label>
-                            <select class="form-select" v-model="newTaskPriority">
-                                <option value="10">{{ trans.prio_high }}</option>
-                                <option value="5">{{ trans.prio_normal }}</option>
-                            </select>
-                        </div>
-                        <button class="btn btn-primary w-100" @click="addTask" :disabled="!newTaskTopic">
-                            <i class="bi bi-plus-circle"></i> {{ trans.btn_add }}
-                        </button>
                     </div>
                 </div>
 
-                <div class="card mt-3">
+                <div class="card">
                     <div class="card-header bg-white">
-                        <h5 class="mb-0">{{ trans.logs }}</h5>
+                        <h5 class="mb-0"><i class="bi bi-chat-dots"></i> {{ trans.chat_title }}</h5>
                     </div>
-                    <div class="card-body bg-dark text-light font-monospace" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;">
-                        <div v-for="log in logs">[[ log ]]</div>
+                    <div class="card-body">
+                        <div class="chat-box mb-3" id="chatContainer">
+                            <div v-for="(msg, index) in chatHistory" :key="index" class="d-flex w-100">
+                                <div class="chat-msg" :class="msg.role === 'user' ? 'msg-user' : 'msg-bot'">
+                                    [[ msg.text ]]
+                                    <span v-if="msg.sources" class="source-badge text-muted">
+                                        Ref: [[ msg.sources.join(', ') ]]
+                                    </span>
+                                </div>
+                            </div>
+                            <div v-if="isChatLoading" class="text-center text-muted">
+                                <div class="spinner-border spinner-border-sm" role="status"></div> Thinking...
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <input type="text" class="form-control" v-model="chatInput" placeholder="{{ trans.chat_placeholder }}" @keyup.enter="sendMessage">
+                            <button class="btn btn-outline-primary" @click="sendMessage" :disabled="!chatInput || isChatLoading">
+                                <i class="bi bi-send"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
+
             </div>
         </div>
     </div>
@@ -138,30 +149,35 @@
     <script>
         new Vue({
             el: '#app',
-            delimiters: ['[[', ']]'], // Jinja2との競合回避
+            delimiters: ['[[', ']]'],
             data: {
                 status: { cpu_percent: 0, memory_percent: 0, ollama_status: 'Checking...' },
                 tasks: [],
-                logs: [],
                 newTaskTopic: '',
-                newTaskPriority: 10,
-                timer: null
+                timer: null,
+                // Chat Data
+                chatInput: '',
+                chatHistory: [],
+                isChatLoading: false
             },
             mounted() {
                 this.fetchData();
-                this.timer = setInterval(this.fetchData, 5000); // 5秒ごとに更新
+                this.timer = setInterval(this.fetchData, 5000);
+            },
+            updated() {
+                // Auto scroll chat
+                const container = this.$el.querySelector("#chatContainer");
+                if(container) container.scrollTop = container.scrollHeight;
             },
             methods: {
                 async fetchData() {
                     try {
-                        const [statusRes, tasksRes, logsRes] = await Promise.all([
+                        const [statusRes, tasksRes] = await Promise.all([
                             axios.get('/api/status'),
-                            axios.get('/api/tasks'),
-                            axios.get('/api/logs')
+                            axios.get('/api/tasks')
                         ]);
                         this.status = statusRes.data;
                         this.tasks = tasksRes.data;
-                        this.logs = logsRes.data.logs;
                     } catch (e) {
                         console.error("Connection lost", e);
                     }
@@ -169,14 +185,29 @@
                 async addTask() {
                     if (!this.newTaskTopic) return;
                     try {
-                        await axios.post('/api/tasks', {
-                            topic: this.newTaskTopic,
-                            priority: parseInt(this.newTaskPriority)
-                        });
+                        await axios.post('/api/tasks', { topic: this.newTaskTopic, priority: 10 });
                         this.newTaskTopic = '';
-                        this.fetchData(); // 即座に更新
+                        this.fetchData();
+                    } catch (e) { alert("Failed to add task."); }
+                },
+                async sendMessage() {
+                    if (!this.chatInput) return;
+                    const userMsg = this.chatInput;
+                    this.chatHistory.push({ role: 'user', text: userMsg });
+                    this.chatInput = '';
+                    this.isChatLoading = true;
+
+                    try {
+                        const res = await axios.post('/api/rag/chat', { message: userMsg });
+                        this.chatHistory.push({
+                            role: 'bot',
+                            text: res.data.answer,
+                            sources: res.data.sources
+                        });
                     } catch (e) {
-                        alert("Failed to add task.");
+                        this.chatHistory.push({ role: 'bot', text: "Error: Could not retrieve answer." });
+                    } finally {
+                        this.isChatLoading = false;
                     }
                 }
             }
