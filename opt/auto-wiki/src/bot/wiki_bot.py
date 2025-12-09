@@ -100,10 +100,13 @@ class LocalWikiBotV2:
 
     def _load_custom_policy(self):
         """外部ファイルから編集方針（システムプロンプト）を読み込む"""
-        path = f"/app/data/prompts/edit_policy_{self.lang}.txt"
+        # 変更点: dataディレクトリではなく、configディレクトリを参照する
+        path = f"/app/config/edit_policy_{self.lang}.txt"
+        
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
+                    print(f"📜 Custom policy loaded: {path}")
                     return f.read().strip()
             except Exception as e:
                 print(f"⚠️ Failed to load custom policy: {e}")
