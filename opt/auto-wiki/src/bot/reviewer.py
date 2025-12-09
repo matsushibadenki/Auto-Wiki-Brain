@@ -65,7 +65,9 @@ class ArticleReviewer:
                 ],
                 temperature=0.1
             )
-            result = resp.choices[0].message.content.strip()
+            # result = resp.choices[0].message.content.strip() を以下に変更
+            content = resp.choices[0].message.content
+            result = content.strip() if content else ""
             
             if result.startswith("PASS"):
                 print("✅ Review Passed.")
@@ -99,7 +101,8 @@ class ArticleReviewer:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2
             )
-            return resp.choices[0].message.content.strip()
+            content = resp.choices[0].message.content
+            return content.strip() if content else original_draft
         except Exception as e:
             print(f"❌ Refinement failed: {e}")
             return original_draft
