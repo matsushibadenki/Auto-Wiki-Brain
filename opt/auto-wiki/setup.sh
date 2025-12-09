@@ -29,6 +29,22 @@ else
     echo -e "${GREEN}✅ Single-language mode selected (ja only).${NC}"
 fi
 
+# 【修正1】マウント用の空ファイルを作成しておく
+echo -e "${YELLOW}📁 Preparing configuration files...${NC}"
+for lang in "${LANG_TARGETS[@]}"; do
+    DIR="./data/mediawiki_html_${lang}"
+    FILE="$DIR/LocalSettings.php"
+    mkdir -p "$DIR"
+    mkdir -p "./data/mediawiki_images_${lang}"
+    
+    # ファイルが存在しない場合は空ファイルを作成（Dockerマウント用）
+    if [ ! -f "$FILE" ]; then
+        touch "$FILE"
+        chmod 666 "$FILE" # コンテナ内のユーザーが書き込めるように
+        echo -e "   - Created empty placeholder for: $FILE"
+    fi
+done
+
 # 1. 基本インフラの起動
 echo -e "${YELLOW}📦 Starting Common Infrastructure (MariaDB, Ollama)...${NC}"
 docker compose up -d mariadb ollama
@@ -37,11 +53,9 @@ docker compose up -d mariadb ollama
 SERVICES_TO_START=""
 for lang in "${LANG_TARGETS[@]}"; do
     SERVICES_TO_START="$SERVICES_TO_START mediawiki-${lang} wiki-bot-${lang}"
-    # Dashboardは現状 ja のみ定義されているため ja の場合のみ起動（必要に応じて修正）
     if [ "$lang" == "ja" ]; then
         SERVICES_TO_START="$SERVICES_TO_START dashboard-ja"
     fi
-    # 英語用Dashboardがdocker-compose.ymlに追加された場合はここで処理
 done
 
 echo -e "${YELLOW}📦 Starting Wiki Services: ${SERVICES_TO_START}...${NC}"
@@ -66,16 +80,15 @@ echo -e "\n${GREEN}✅ MariaDB is ready!${NC}"
 for lang in "${LANG_TARGETS[@]}"; do
     echo -e "${YELLOW}⚙️  Configuring MediaWiki for [${lang}]...${NC}"
     
-    # パスの定義（docker-compose.ymlのマウント設定に合わせる）
-    # 例: ./data/mediawiki_html_ja/LocalSettings.php
     SETTINGS_FILE="./data/mediawiki_html_${lang}/LocalSettings.php"
     CONTAINER_NAME="mediawiki-${lang}"
     DB_NAME="my_wiki_${lang}"
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
+    # 【修正2】ファイルが存在しない OR 空ファイルの場合にインストールを実行
+    if [ ! -s "$SETTINGS_FILE" ]; then
         echo -e "   Installing MediaWiki via CLI in ${CONTAINER_NAME}..."
         
-        # install.php を実行
+        # install.php を実行 (LocalSettings.php はマウントされているのでホスト側にも反映される)
         docker compose exec ${CONTAINER_NAME} php maintenance/install.php \
             --dbname="${DB_NAME}" \
             --dbuser=wikiuser \
@@ -88,14 +101,15 @@ for lang in "${LANG_TARGETS[@]}"; do
         if [ $? -eq 0 ]; then
             echo -e "   ✅ Installation successful for ${lang}."
             
-            # 必要な設定を追記
             echo -e "   📝 Configuring LocalSettings.php for ${lang}..."
             
-            # 画像アップロードとInstantCommonsの有効化
-            echo "" >> "$SETTINGS_FILE"
-            echo "// Auto-Wiki-Brain Custom Settings" >> "$SETTINGS_FILE"
-            echo "\$wgEnableUploads = true;" >> "$SETTINGS_FILE"
-            echo "\$wgUseInstantCommons = true;" >> "$SETTINGS_FILE"
+            # 追記設定
+            cat <<EOF >> "$SETTINGS_FILE"
+
+// Auto-Wiki-Brain Custom Settings
+\$wgEnableUploads = true;
+\$wgUseInstantCommons = true;
+EOF
             
             # Botアカウントの作成
             echo -e "   🤖 Creating Bot Account for ${lang}..."
@@ -108,7 +122,7 @@ for lang in "${LANG_TARGETS[@]}"; do
             exit 1
         fi
     else
-        echo -e "${GREEN}✅ LocalSettings.php already exists for ${lang}. Skipping.${NC}"
+        echo -e "${GREEN}✅ LocalSettings.php already exists (size > 0) for ${lang}. Skipping.${NC}"
     fi
 done
 
