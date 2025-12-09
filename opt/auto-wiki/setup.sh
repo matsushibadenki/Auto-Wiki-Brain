@@ -16,9 +16,36 @@ else
     exit 1
 fi
 
+# --- ユーザーへの確認 (多言語設定) ---
+echo -e "${YELLOW}🌐 Language Setup Selection${NC}"
+read -p "多言語対応モード（日本語 + 英語）でセットアップしますか？ (y/N): " ENABLE_MULTI_LANG
+
+# 対象言語リストの作成
+LANG_TARGETS=("ja") # デフォルトは日本語のみ
+if [[ "$ENABLE_MULTI_LANG" =~ ^[yY] ]]; then
+    echo -e "${GREEN}✅ Multi-language mode selected (ja, en).${NC}"
+    LANG_TARGETS+=("en")
+else
+    echo -e "${GREEN}✅ Single-language mode selected (ja only).${NC}"
+fi
+
 # 1. 基本インフラの起動
-echo -e "${YELLOW}📦 Starting Infrastructure (DB, Wiki, Ollama)...${NC}"
-docker compose up -d mariadb mediawiki ollama
+echo -e "${YELLOW}📦 Starting Common Infrastructure (MariaDB, Ollama)...${NC}"
+docker compose up -d mariadb ollama
+
+# 選択された言語のサービスを起動
+SERVICES_TO_START=""
+for lang in "${LANG_TARGETS[@]}"; do
+    SERVICES_TO_START="$SERVICES_TO_START mediawiki-${lang} wiki-bot-${lang}"
+    # Dashboardは現状 ja のみ定義されているため ja の場合のみ起動（必要に応じて修正）
+    if [ "$lang" == "ja" ]; then
+        SERVICES_TO_START="$SERVICES_TO_START dashboard-ja"
+    fi
+    # 英語用Dashboardがdocker-compose.ymlに追加された場合はここで処理
+done
+
+echo -e "${YELLOW}📦 Starting Wiki Services: ${SERVICES_TO_START}...${NC}"
+docker compose up -d $SERVICES_TO_START
 
 # 2. MariaDBの起動待機
 echo -e "${YELLOW}⏳ Waiting for MariaDB to be ready...${NC}"
@@ -35,58 +62,68 @@ while ! docker compose exec mariadb mysqladmin ping -h"localhost" -u"root" -p"${
 done
 echo -e "\n${GREEN}✅ MariaDB is ready!${NC}"
 
-# 3. MediaWikiの自動インストール (LocalSettings.phpの生成)
-if [ ! -f ./data/mediawiki_html/LocalSettings.php ]; then
-    echo -e "${YELLOW}⚙️  Installing MediaWiki via CLI...${NC}"
+# 3. MediaWikiの自動インストール (各言語でループ実行)
+for lang in "${LANG_TARGETS[@]}"; do
+    echo -e "${YELLOW}⚙️  Configuring MediaWiki for [${lang}]...${NC}"
     
-    # install.php を実行
-    docker compose exec mediawiki php maintenance/install.php \
-        --dbname=my_wiki \
-        --dbuser=wikiuser \
-        --dbpass="${WIKI_DB_PASS}" \
-        --dbserver=mariadb \
-        --lang=ja \
-        --pass="${ADMIN_PASS}" \
-        "AutoWiki" "${ADMIN_USER}"
+    # パスの定義（docker-compose.ymlのマウント設定に合わせる）
+    # 例: ./data/mediawiki_html_ja/LocalSettings.php
+    SETTINGS_FILE="./data/mediawiki_html_${lang}/LocalSettings.php"
+    CONTAINER_NAME="mediawiki-${lang}"
+    DB_NAME="my_wiki_${lang}"
 
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ MediaWiki installed successfully.${NC}"
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "   Installing MediaWiki via CLI in ${CONTAINER_NAME}..."
         
-        # 必要な設定を追記
-        echo -e "${YELLOW}📝 Configuring LocalSettings.php...${NC}"
-        LSPATH="./data/mediawiki_html/LocalSettings.php"
-        
-        # 画像アップロードとInstantCommonsの有効化
-        echo "" >> $LSPATH
-        echo "// Auto-Wiki-Brain Custom Settings" >> $LSPATH
-        echo "\$wgEnableUploads = true;" >> $LSPATH
-        echo "\$wgUseInstantCommons = true;" >> $LSPATH
-        
-        # Botアカウントの作成 (install.phpで作ったAdminとは別にBotを作る場合)
-        # ここではAdminBotを使用するため、createAndPromote.phpを使用
-        echo -e "${YELLOW}🤖 Creating Bot Account...${NC}"
-        docker compose exec mediawiki php maintenance/createAndPromote.php \
-            --bot --force \
-            "${BOT_USER}" "${BOT_PASS}"
+        # install.php を実行
+        docker compose exec ${CONTAINER_NAME} php maintenance/install.php \
+            --dbname="${DB_NAME}" \
+            --dbuser=wikiuser \
+            --dbpass="${WIKI_DB_PASS}" \
+            --dbserver=mariadb \
+            --lang="${lang}" \
+            --pass="${ADMIN_PASS}" \
+            "AutoWiki-${lang^^}" "${ADMIN_USER}"
+
+        if [ $? -eq 0 ]; then
+            echo -e "   ✅ Installation successful for ${lang}."
             
+            # 必要な設定を追記
+            echo -e "   📝 Configuring LocalSettings.php for ${lang}..."
+            
+            # 画像アップロードとInstantCommonsの有効化
+            echo "" >> "$SETTINGS_FILE"
+            echo "// Auto-Wiki-Brain Custom Settings" >> "$SETTINGS_FILE"
+            echo "\$wgEnableUploads = true;" >> "$SETTINGS_FILE"
+            echo "\$wgUseInstantCommons = true;" >> "$SETTINGS_FILE"
+            
+            # Botアカウントの作成
+            echo -e "   🤖 Creating Bot Account for ${lang}..."
+            docker compose exec ${CONTAINER_NAME} php maintenance/createAndPromote.php \
+                --bot --force \
+                "${BOT_USER}" "${BOT_PASS}"
+                
+        else
+            echo -e "${RED}❌ MediaWiki installation failed for ${lang}.${NC}"
+            exit 1
+        fi
     else
-        echo -e "${RED}❌ MediaWiki installation failed.${NC}"
-        exit 1
+        echo -e "${GREEN}✅ LocalSettings.php already exists for ${lang}. Skipping.${NC}"
     fi
-else
-    echo -e "${GREEN}✅ LocalSettings.php already exists. Skipping installation.${NC}"
-fi
+done
 
 # 4. AIモデルのプル
 echo -e "${YELLOW}🧠 Pulling AI Model (${MODEL_NAME})...${NC}"
-# モデルが既にあるか確認するのは難しいので、常にpullを試みる（キャッシュがあれば早いため）
 docker compose exec ollama ollama pull ${MODEL_NAME}
 
-# 5. 全サービスの起動 (Bot, API)
-echo -e "${YELLOW}🚀 Starting Agents and API...${NC}"
-docker compose up -d --build
+# 5. 再起動（設定反映のため）
+echo -e "${YELLOW}🔄 Restarting services to apply settings...${NC}"
+docker compose restart $SERVICES_TO_START
 
 echo -e "${GREEN}🎉 Setup Complete!${NC}"
-echo -e "   - Wiki URL: http://localhost:8080"
-echo -e "   - Dashboard: http://localhost:8000/dashboard"
+echo -e "   - Wiki (JA): http://localhost:8080"
+if [[ "$ENABLE_MULTI_LANG" =~ ^[yY] ]]; then
+    echo -e "   - Wiki (EN): http://localhost:8081"
+fi
+echo -e "   - Dashboard (JA): http://localhost:8000/dashboard"
 echo -e "   - User/Pass: ${ADMIN_USER} / ${ADMIN_PASS}"
