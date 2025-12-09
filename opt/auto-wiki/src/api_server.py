@@ -1,27 +1,27 @@
 # /opt/auto-wiki/src/api_server.py
-# 日本語タイトル: RAG APIサーバー + システム管理ダッシュボード (v2.3)
-# 目的: 管理画面の提供、およびRAGチャット機能のバックエンド処理
+# 日本語タイトル: RAG APIサーバー + システム管理ダッシュボード (v2.4 - Root Redirect)
+# 目的: 管理画面の提供、およびRAGチャット機能、システム診断のバックエンド処理
 
 import os
 import psutil
 from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse  # RedirectResponseを追加
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 import secrets
 import sys
 from openai import OpenAI
-from src.utils.diagnostics import SystemDiagnostics
 
 sys.path.append("/app")
 from src.scheduler.task_manager import WikiScheduler
 from src.rag.vector_store import WikiVectorDB
+from src.utils.diagnostics import SystemDiagnostics
 
 app = FastAPI(
     title="Auto-Wiki Control Panel",
     description="自律型Wikiシステムの管理とRAG API",
-    version="2.3.0"
+    version="2.4.0"
 )
 
 templates = Jinja2Templates(directory="/app/src/templates")
@@ -30,15 +30,12 @@ security = HTTPBasic()
 # DB接続
 scheduler = WikiScheduler(db_path="/app/scheduler.db")
 vector_db = WikiVectorDB()
+diagnostics = SystemDiagnostics()
 
 # LLM接続 (Ollama) - チャット応答用
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemma2")
 llm_client = OpenAI(base_url=OLLAMA_HOST, api_key="ollama")
-
-
-# 診断クラスのインスタンス化
-diagnostics = SystemDiagnostics()
 
 # --- 言語設定と翻訳辞書 ---
 SYSTEM_LANG = os.getenv("WIKI_LANG", "ja")
@@ -50,7 +47,6 @@ TRANSLATIONS = {
         "chat_placeholder": "蓄積された知識について質問してください...",
         "btn_send": "送信",
         "system_status": "システムステータス",
-        # ... (既存の翻訳は維持) ...
         "cpu": "CPU使用率",
         "memory": "メモリ",
         "disk": "ディスク空き容量",
@@ -79,7 +75,6 @@ TRANSLATIONS = {
         "chat_placeholder": "Ask about accumulated knowledge...",
         "btn_send": "Send",
         "system_status": "System Status",
-        # ... (Existing translations) ...
         "cpu": "CPU Usage",
         "memory": "Memory",
         "disk": "Disk Free",
@@ -104,7 +99,7 @@ TRANSLATIONS = {
     }
 }
 
-# --- 認証ロジック (既存維持) ---
+# --- 認証ロジック ---
 def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = os.getenv("ADMIN_USER", "admin").encode("utf8")
     correct_password = os.getenv("ADMIN_PASS", "password").encode("utf8")
@@ -132,7 +127,12 @@ class SearchQuery(BaseModel):
 class ChatRequest(BaseModel):
     message: str
 
-# --- Dashboard Endpoints ---
+# --- Endpoints ---
+
+# [NEW] ルートアクセス時のリダイレクト
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/dashboard")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, username: str = Depends(get_current_username)):
@@ -174,6 +174,14 @@ def add_manual_task(task: TaskCreate, username: str = Depends(get_current_userna
 def get_bot_logs(username: str = Depends(get_current_username)):
     return {"logs": ["Logs should be viewed via 'docker compose logs' in production."]}
 
+# --- Diagnostics Endpoints ---
+
+@app.get("/api/diagnostics/run")
+def run_system_diagnostics(username: str = Depends(get_current_username)):
+    """システム診断を実行して結果を返す"""
+    results = diagnostics.run_all_checks()
+    return {"results": results}
+
 # --- RAG Endpoints ---
 
 @app.post("/api/rag/search")
@@ -189,9 +197,7 @@ def search_knowledge_base(query: SearchQuery):
 @app.post("/api/rag/chat")
 def chat_with_brain(req: ChatRequest):
     """
-    [NEW] Wiki Brainとの対話API
-    1. VectorDBから関連知識を検索
-    2. LLMにコンテキストとして与えて回答生成
+    Wiki Brainとの対話API
     """
     user_msg = req.message
     
@@ -245,11 +251,11 @@ def chat_with_brain(req: ChatRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        
-        
-# --- Diagnostics Endpoints ---
-@app.get("/api/diagnostics/run")
-def run_system_diagnostics(username: str = Depends(get_current_username)):
-    """システム診断を実行して結果を返す"""
-    results = diagnostics.run_all_checks()
-    return {"results": results}
+```
+
+### 反映手順
+
+1.  上記のコードで `opt/auto-wiki/src/api_server.py` を上書き保存します。
+2.  ダッシュボードコンテナを再起動します。
+    ```bash
+    docker compose restart dashboard-ja
