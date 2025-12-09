@@ -65,7 +65,9 @@ class DeepResearcher:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             )
-            content = resp.choices[0].message.content.strip()
+            raw_content = resp.choices[0].message.content
+            content = raw_content.strip() if raw_content else "[]"
+            
             # JSON部分だけ抽出（Markdownタグ対策）
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
