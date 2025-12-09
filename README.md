@@ -39,7 +39,7 @@ An autonomous AI system that automatically collects information from the interne
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/auto-wiki-brain.git
+git clone https://github.com/matsushibadenki/auto-wiki-brain.git
 cd auto-wiki-brain
 
 # Configure environment variables
@@ -241,8 +241,8 @@ MIT License - See [LICENSE](LICENSE) for details
 ### Related Links
 
 - [Detailed Documentation](docs/ARCHITECTURE.md)
-- [Issue Tracker](https://github.com/yourusername/auto-wiki-brain/issues)
-- [Discussion Forum](https://github.com/yourusername/auto-wiki-brain/discussions)
+- [Issue Tracker](https://github.com/matsushibadenki/auto-wiki-brain/issues)
+- [Discussion Forum](https://github.com/matsushibadenki/auto-wiki-brain/discussions)
 
 ---
 
@@ -285,7 +285,7 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/yourusername/auto-wiki-brain.git
+git clone https://github.com/matsushibadenki/auto-wiki-brain.git
 cd auto-wiki-brain
 
 # 環境変数を設定
@@ -487,8 +487,8 @@ MIT License - 詳細は [LICENSE](LICENSE) を参照
 ### 関連リンク
 
 - [詳細ドキュメント](docs/ARCHITECTURE.md)
-- [Issue Tracker](https://github.com/yourusername/auto-wiki-brain/issues)
-- [Discussion Forum](https://github.com/yourusername/auto-wiki-brain/discussions)
+- [Issue Tracker](https://github.com/matsushibadenki/auto-wiki-brain/issues)
+- [Discussion Forum](https://github.com/matsushibadenki/auto-wiki-brain/discussions)
 
 ---
 
