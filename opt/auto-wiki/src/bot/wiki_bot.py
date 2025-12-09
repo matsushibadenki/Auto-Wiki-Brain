@@ -1,8 +1,8 @@
 # /opt/auto-wiki/src/bot/wiki_bot.py
 # 自律型Wiki Botのメインロジック
-# 目的: 記事の検索・吟味・画像選定・執筆・投稿のワークフロー制御
+# 目的: 記事の検索・吟味・画像選定・執筆・投稿のワークフロー制御、および内部リンクの構築
 
-import os  # 追加
+import os
 import mwclient
 from openai import OpenAI
 from duckduckgo_search import DDGS
@@ -34,7 +34,7 @@ class LocalWikiBotV2:
 
     def update_article(self, topic: str):
         """
-        記事のライフサイクル管理: 検索 -> 吟味 -> 画像選定 -> 執筆 -> 投稿
+        記事のライフサイクル管理: 検索 -> 吟味 -> 画像選定 -> 執筆 -> 内部リンク生成 -> 投稿
         """
         print(f"\n📘 Processing Topic ({self.lang}): {topic}")
 
@@ -88,19 +88,60 @@ class LocalWikiBotV2:
             print(f"❌ Generation failed: {e}")
             return
 
+        # --- Phase 4.5: Internal Linking (内部リンク生成) [NEW] ---
+        # 既存の機能を維持しつつ、関連項目の自動生成を追加
+        try:
+            see_also_section = self._generate_see_also(topic)
+            if see_also_section:
+                # 記事の末尾に追加（カテゴリの前などが望ましいが、簡易的に末尾へ）
+                new_text += f"\n\n{see_also_section}"
+        except Exception as e:
+            print(f"⚠️ Internal linking failed: {e}")
+
         # --- Phase 5: Publishing (投稿) ---
         if "NO_CHANGE" not in new_text and len(new_text) > 50:
             summary = "Auto-update via Local LLM"
             new_text = new_text.replace("```wikitext", "").replace("```", "")
             page.save(new_text, summary=summary)
             print("✅ Article saved successfully.")
+            
+            # ベクトルDBも更新
             self.vector_db.upsert_article(topic, new_text)
         else:
             print("⏹️  No significant changes generated.")
 
+    def _generate_see_also(self, topic: str) -> str:
+        """
+        ベクトルDBを検索し、関連する既存記事へのリンク集を生成する
+        """
+        print("🔗 Generating internal links...")
+        # 自分自身を除外するために少し多めに取得
+        results = self.vector_db.search(topic, n_results=5)
+        
+        if not results or not results['ids']:
+            return ""
+
+        related_topics = []
+        ids = results['ids'][0] # ChromaDB returns list of lists
+        
+        for related_id in ids:
+            # 自分自身はリンクしない
+            if related_id != topic:
+                related_topics.append(f"* [[{related_id}]]")
+        
+        if not related_topics:
+            return ""
+        
+        # 重複排除
+        related_topics = list(set(related_topics))
+
+        if self.lang == "ja":
+            return "== 関連項目 ==\n" + "\n".join(related_topics)
+        else:
+            return "== See Also ==\n" + "\n".join(related_topics)
+
     def _load_custom_policy(self):
         """外部ファイルから編集方針（システムプロンプト）を読み込む"""
-        # 変更点: dataディレクトリではなく、configディレクトリを参照する
         path = f"/app/config/edit_policy_{self.lang}.txt"
         
         if os.path.exists(path):
@@ -113,7 +154,7 @@ class LocalWikiBotV2:
         return None
 
     def _build_prompt(self, topic, old_text, info, image_inst):
-        # 1. コンテキストデータの構築（共通部分）
+        # 1. コンテキストデータの構築
         data_section = f"""
         # Target Topic
         {topic}
@@ -131,11 +172,10 @@ class LocalWikiBotV2:
         # 2. 編集方針（システムプロンプト）の決定
         policy = self._load_custom_policy()
 
-        # 3. カスタムポリシーがあればそれを使用
         if policy:
             return f"{policy}\n\n{data_section}\n\nOutput the full updated article in Wikitext format."
 
-        # 4. デフォルトポリシー（ファイルがない場合）
+        # デフォルトポリシー（英語/日本語）
         if self.lang == "en":
             return f"""
             You are an expert Wikipedia editor.
