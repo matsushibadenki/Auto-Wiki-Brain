@@ -2,6 +2,7 @@
 # 自律型Wiki Botのメインロジック
 # 目的: 記事の検索・吟味・画像選定・執筆・投稿のワークフロー制御
 
+import os  # 追加
 import mwclient
 from openai import OpenAI
 from duckduckgo_search import DDGS
@@ -15,7 +16,6 @@ class LocalWikiBotV2:
         self.lang = lang
         
         # 1. MediaWiki接続
-        # Dockerネットワーク内では http で接続
         self.site = mwclient.Site(wiki_host, path='/', scheme='http')
         try:
             self.site.login(bot_user, bot_pass)
@@ -29,7 +29,6 @@ class LocalWikiBotV2:
         # 3. エージェント初期化
         self.ddgs = DDGS()
         self.commons = CommonsAgent(self.client, model_name)
-        # Vetterにも言語設定を渡す
         self.vetter = InformationVetter(self.client, model_name, lang=lang)
         self.vector_db = WikiVectorDB()
 
@@ -41,7 +40,6 @@ class LocalWikiBotV2:
 
         # --- Phase 1: Discovery & Research ---
         try:
-            # 検索も言語に合わせて結果を取得（DuckDuckGoはregion指定可能）
             region = "jp-jp" if self.lang == "ja" else "us-en"
             raw_results = self.ddgs.text(topic, region=region, max_results=10)
         except Exception as e:
@@ -93,18 +91,48 @@ class LocalWikiBotV2:
         # --- Phase 5: Publishing (投稿) ---
         if "NO_CHANGE" not in new_text and len(new_text) > 50:
             summary = "Auto-update via Local LLM"
-            
-            # クリーニング
             new_text = new_text.replace("```wikitext", "").replace("```", "")
-            
             page.save(new_text, summary=summary)
             print("✅ Article saved successfully.")
-            
             self.vector_db.upsert_article(topic, new_text)
         else:
             print("⏹️  No significant changes generated.")
 
+    def _load_custom_policy(self):
+        """外部ファイルから編集方針（システムプロンプト）を読み込む"""
+        path = f"/app/data/prompts/edit_policy_{self.lang}.txt"
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+            except Exception as e:
+                print(f"⚠️ Failed to load custom policy: {e}")
+        return None
+
     def _build_prompt(self, topic, old_text, info, image_inst):
+        # 1. コンテキストデータの構築（共通部分）
+        data_section = f"""
+        # Target Topic
+        {topic}
+
+        # Trusted Sources (Information to be used)
+        {info}
+
+        # Image Instructions
+        {image_inst}
+
+        # Existing Article Content (For reference/update)
+        {old_text[:3000]}...
+        """
+
+        # 2. 編集方針（システムプロンプト）の決定
+        policy = self._load_custom_policy()
+
+        # 3. カスタムポリシーがあればそれを使用
+        if policy:
+            return f"{policy}\n\n{data_section}\n\nOutput the full updated article in Wikitext format."
+
+        # 4. デフォルトポリシー（ファイルがない場合）
         if self.lang == "en":
             return f"""
             You are an expert Wikipedia editor.
@@ -117,14 +145,7 @@ class LocalWikiBotV2:
             4. Output ONLY Wikitext format. No Markdown.
             5. Start with a definition.
 
-            # Trusted Sources
-            {info}
-
-            # Image Instructions
-            {image_inst}
-
-            # Existing Content
-            {old_text[:3000]}...
+            {data_section}
 
             Output the full updated article. If no changes are needed, output "NO_CHANGE".
             """
@@ -140,14 +161,7 @@ class LocalWikiBotV2:
             4. 出力はWiki構文（Wikitext）のみで行ってください。Markdownは使用しないでください。
             5. 記事の冒頭は定義から始めてください。
 
-            # 信頼できる情報源
-            {info}
-
-            # 画像指示
-            {image_inst}
-
-            # 既存の記事内容
-            {old_text[:3000]}...
+            {data_section}
 
             更新された記事全文を出力してください。変更が不要な場合は "NO_CHANGE" と出力してください。
             """
