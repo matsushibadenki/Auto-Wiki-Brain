@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # /opt/auto-wiki/maintenance/factory_reset.sh
-# システム初期化（ファクトリーリセット）スクリプト (Fixed: Recreate empty DB files)
+# システム初期化（ファクトリーリセット）スクリプト (Fixed: Permission & 404 Error)
 # 目的: 蓄積された記事・ベクトルデータ・設定を削除し、インストール直後の状態に戻す
 # オプション: --all をつけるとAIモデル(Ollama)も削除する
 
@@ -40,11 +40,11 @@ fi
 echo -e "\n${YELLOW}🛑 Stopping services...${NC}"
 docker compose down -v
 
-# 2. データの削除
-echo -e "${YELLOW}🗑️  Deleting data files...${NC}"
+# 2. データの削除と再作成
+echo -e "${YELLOW}🗑️  Resetting data directories...${NC}"
 
-# 削除対象
-targets=(
+# リセット対象のディレクトリ（削除して作り直す）
+dirs_to_reset=(
     "data/mediawiki_db"
     "data/mediawiki_html_ja"
     "data/mediawiki_images_ja"
@@ -52,17 +52,48 @@ targets=(
     "data/mediawiki_images_en"
     "data/chromadb_ja"
     "data/chromadb_en"
-    "data/scheduler_ja.db"
-    "data/scheduler_en.db"
-    "data/inputs/processed/*"
 )
 
-for target in "${targets[@]}"; do
-    if [ -e "$target" ]; then
-        echo "   - Removing $target"
-        sudo rm -rf $target
+# リセット対象のファイル（削除して空ファイルを作る）
+files_to_reset=(
+    "data/scheduler_ja.db"
+    "data/scheduler_en.db"
+)
+
+# ディレクトリの処理
+for dir in "${dirs_to_reset[@]}"; do
+    if [ -d "$dir" ]; then
+        echo "   - Removing directory: $dir"
+        sudo rm -rf "$dir"
     fi
+    # [重要] 再作成し、Dockerが書き込めるように権限を与える
+    # これによりMediaWikiの初期ファイルコピー失敗(404エラー)を防ぐ
+    echo "   - Recreating directory: $dir"
+    mkdir -p "$dir"
+    chmod 777 "$dir"
 done
+
+# ファイルの処理
+for file in "${files_to_reset[@]}"; do
+    if [ -f "$file" ]; then
+        echo "   - Removing file: $file"
+        rm -f "$file"
+    elif [ -d "$file" ]; then
+        # ディレクトリになってしまっていた場合も削除
+        echo "   - Removing directory (invalid db): $file"
+        sudo rm -rf "$file"
+    fi
+    # 空ファイルを作成し、書き込み権限を与える
+    echo "   - Recreating empty file: $file"
+    touch "$file"
+    chmod 666 "$file"
+done
+
+# inputsディレクトリのクリーンアップ（ディレクトリ自体は残す）
+if [ -d "data/inputs/processed" ]; then
+    echo "   - Cleaning inputs/processed/"
+    sudo rm -rf data/inputs/processed/*
+fi
 
 # AIモデルの削除
 if [ "$DELETE_MODELS" = true ]; then
@@ -71,11 +102,6 @@ if [ "$DELETE_MODELS" = true ]; then
         sudo rm -rf data/ollama
     fi
 fi
-
-# [修正] 空のDBファイルを再作成（ディレクトリ化防止）
-echo -e "${YELLOW}✨ Recreating empty database files...${NC}"
-touch data/scheduler_ja.db
-touch data/scheduler_en.db
 
 echo -e "${GREEN}✅ Reset Complete.${NC}"
 echo ""
