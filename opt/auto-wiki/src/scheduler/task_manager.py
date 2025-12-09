@@ -14,9 +14,13 @@ class WikiScheduler:
         self._init_db()
         self._reset_stuck_tasks() # 起動時にスタックしたタスクをリセット
 
+    def _get_conn(self):
+        """タイムアウト設定付きのDB接続を取得"""
+        return sqlite3.connect(self.db_path, timeout=30.0)
+
     def _init_db(self):
         """データベースとテーブルの初期化"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tasks (
@@ -34,7 +38,7 @@ class WikiScheduler:
 
     def _reset_stuck_tasks(self):
         """起動時にRUNNING状態のままのタスクをPENDINGに戻す（異常終了対策）"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("UPDATE tasks SET status = 'PENDING' WHERE status = 'RUNNING'")
         if cursor.rowcount > 0:
@@ -64,7 +68,7 @@ class WikiScheduler:
         タスクを追加または更新する
         Return: True if new task added, False if existed
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_conn()
         cursor = conn.cursor()
         
         # 既存チェック
@@ -101,10 +105,24 @@ class WikiScheduler:
 
     def get_next_task(self):
         """実行すべきタスクを一つ取得し、RUNNING状態にする"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_conn()
         cursor = conn.cursor()
         
         now = datetime.now()
+
+        # --- ゾンビタスクの救出 ---
+        # RUNNING状態のまま30分以上経過しているタスクがあればPENDINGに戻す
+        # (Botが処理中にエラーで落ちてステータス更新できなかった場合の対策)
+        # ここでは last_run を「実行開始時刻」として利用して判定する
+        timeout_threshold = now - timedelta(minutes=30)
+        cursor.execute('''
+            UPDATE tasks 
+            SET status = 'PENDING' 
+            WHERE status = 'RUNNING' AND last_run < ?
+        ''', (timeout_threshold,))
+        if cursor.rowcount > 0:
+            print(f"🚑 Recovered {cursor.rowcount} timed-out tasks.")
+            conn.commit()
         
         # 優先度順、かつ実行時刻が到来しているもの
         cursor.execute('''
@@ -117,7 +135,8 @@ class WikiScheduler:
         row = cursor.fetchone()
         if row:
             task_id, topic = row
-            cursor.execute("UPDATE tasks SET status = 'RUNNING' WHERE id = ?", (task_id,))
+            # RUNNINGにする際、last_runに現在時刻（開始時刻）を入れることでタイムアウト判定に使う
+            cursor.execute("UPDATE tasks SET status = 'RUNNING', last_run = ? WHERE id = ?", (now, task_id))
             conn.commit()
             conn.close()
             return topic
@@ -127,9 +146,10 @@ class WikiScheduler:
 
     def complete_task(self, topic: str):
         """タスクを完了状態にする"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_conn()
         cursor = conn.cursor()
         # 完了時は next_run をNULLにして、次回実行対象から外す
+        # last_run は完了時刻で上書きされる
         cursor.execute('''
             UPDATE tasks 
             SET status = 'FINISHED', last_run = ?, next_run = NULL 
@@ -142,7 +162,7 @@ class WikiScheduler:
         """
         管理画面用：タスク一覧を取得する
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_conn()
         cursor = conn.cursor()
         # 実行中、保留中、完了の順に取得
         cursor.execute('''
