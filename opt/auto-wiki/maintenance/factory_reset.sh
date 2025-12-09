@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # /opt/auto-wiki/maintenance/factory_reset.sh
-# システム初期化（ファクトリーリセット）スクリプト (Fixed: Permission & 404 Error)
+# システム初期化（ファクトリーリセット）スクリプト (Fixed: Permission & 404 Error Robustness)
 # 目的: 蓄積された記事・ベクトルデータ・設定を削除し、インストール直後の状態に戻す
 # オプション: --all をつけるとAIモデル(Ollama)も削除する
 
@@ -39,11 +39,13 @@ fi
 # 1. サービスの停止
 echo -e "\n${YELLOW}🛑 Stopping services...${NC}"
 docker compose down -v
+# -v オプションでDocker管理下のボリュームも削除
 
 # 2. データの削除と再作成
 echo -e "${YELLOW}🗑️  Resetting data directories...${NC}"
 
 # リセット対象のディレクトリ（削除して作り直す）
+# 注意: MediaWikiのHTMLディレクトリを確実に空にしておかないと、コンテナ起動時にファイルコピーがスキップされて404になる
 dirs_to_reset=(
     "data/mediawiki_db"
     "data/mediawiki_html_ja"
@@ -52,9 +54,11 @@ dirs_to_reset=(
     "data/mediawiki_images_en"
     "data/chromadb_ja"
     "data/chromadb_en"
+    "data/inputs/processed"
 )
 
 # リセット対象のファイル（削除して空ファイルを作る）
+# Dockerが誤ってディレクトリとしてマウントするのを防ぐため
 files_to_reset=(
     "data/scheduler_ja.db"
     "data/scheduler_en.db"
@@ -66,21 +70,15 @@ for dir in "${dirs_to_reset[@]}"; do
         echo "   - Removing directory: $dir"
         sudo rm -rf "$dir"
     fi
-    # [重要] 再作成し、Dockerが書き込めるように権限を与える
-    # これによりMediaWikiの初期ファイルコピー失敗(404エラー)を防ぐ
+    # [重要] 権限777で作成することで、コンテナ(www-data等)からの書き込みを許可する
     echo "   - Recreating directory: $dir"
-    mkdir -p "$dir"
-    chmod 777 "$dir"
+    mkdir -p -m 777 "$dir"
 done
 
 # ファイルの処理
 for file in "${files_to_reset[@]}"; do
-    if [ -f "$file" ]; then
-        echo "   - Removing file: $file"
-        rm -f "$file"
-    elif [ -d "$file" ]; then
-        # ディレクトリになってしまっていた場合も削除
-        echo "   - Removing directory (invalid db): $file"
+    if [ -e "$file" ]; then
+        echo "   - Removing existing path: $file"
         sudo rm -rf "$file"
     fi
     # 空ファイルを作成し、書き込み権限を与える
@@ -88,12 +86,6 @@ for file in "${files_to_reset[@]}"; do
     touch "$file"
     chmod 666 "$file"
 done
-
-# inputsディレクトリのクリーンアップ（ディレクトリ自体は残す）
-if [ -d "data/inputs/processed" ]; then
-    echo "   - Cleaning inputs/processed/"
-    sudo rm -rf data/inputs/processed/*
-fi
 
 # AIモデルの削除
 if [ "$DELETE_MODELS" = true ]; then
