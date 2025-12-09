@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="{{ lang }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto-Wiki Brain | Control Panel</title>
+    <title>{{ trans.title }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
@@ -17,36 +17,34 @@
 </head>
 <body>
     <div id="app" class="container py-4">
-        <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1 class="h3"><i class="bi bi-robot"></i> Auto-Wiki Brain Dashboard</h1>
+            <h1 class="h3"><i class="bi bi-robot"></i> {{ trans.title }}</h1>
             <span class="badge bg-secondary">User: {{ username }}</span>
         </div>
 
-        <!-- System Status Cards -->
         <div class="row mb-4">
             <div class="col-md-3">
                 <div class="card p-3">
-                    <h6 class="text-muted">CPU Usage</h6>
+                    <h6 class="text-muted">{{ trans.cpu }}</h6>
                     <h3 class="mb-0">[[ status.cpu_percent ]]%</h3>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card p-3">
-                    <h6 class="text-muted">Memory</h6>
+                    <h6 class="text-muted">{{ trans.memory }}</h6>
                     <h3 class="mb-0">[[ status.memory_percent ]]%</h3>
                     <small>[[ status.memory_used_gb ]]GB / [[ status.memory_total_gb ]]GB</small>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card p-3">
-                    <h6 class="text-muted">Disk Free</h6>
+                    <h6 class="text-muted">{{ trans.disk }}</h6>
                     <h3 class="mb-0">[[ status.disk_free_gb ]]GB</h3>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card p-3">
-                    <h6 class="text-muted">AI Engine (Ollama)</h6>
+                    <h6 class="text-muted">{{ trans.ai_engine }}</h6>
                     <h3 class="mb-0">
                         <span class="status-indicator" :class="status.ollama_status === 'Online' ? 'status-online' : 'status-offline'"></span>
                         [[ status.ollama_status ]]
@@ -55,31 +53,29 @@
             </div>
         </div>
 
-        <!-- Task Management -->
         <div class="row">
-            <!-- Task Queue -->
             <div class="col-md-8">
                 <div class="card">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">Task Queue</h5>
-                        <button class="btn btn-sm btn-outline-primary" @click="fetchTasks"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+                        <h5 class="mb-0">{{ trans.task_queue }}</h5>
+                        <button class="btn btn-sm btn-outline-primary" @click="fetchTasks"><i class="bi bi-arrow-clockwise"></i> {{ trans.refresh }}</button>
                     </div>
                     <div class="card-body p-0">
                         <table class="table table-hover mb-0">
                             <thead>
                                 <tr>
-                                    <th>Topic</th>
-                                    <th>Priority</th>
-                                    <th>Status</th>
-                                    <th>Next Run</th>
+                                    <th>{{ trans.col_topic }}</th>
+                                    <th>{{ trans.col_priority }}</th>
+                                    <th>{{ trans.col_status }}</th>
+                                    <th>{{ trans.col_next }}</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr v-for="task in tasks" :key="task.topic">
                                     <td class="fw-bold">[[ task.topic ]]</td>
                                     <td>
-                                        <span class="badge bg-info" v-if="task.priority >= 8">High</span>
-                                        <span class="badge bg-secondary" v-else>Normal</span>
+                                        <span class="badge bg-info" v-if="task.priority >= 8">{{ trans.badge_high }}</span>
+                                        <span class="badge bg-secondary" v-else>{{ trans.badge_norm }}</span>
                                     </td>
                                     <td>
                                         <span class="badge" 
@@ -94,7 +90,7 @@
                                     <td>[[ task.next_run ]]</td>
                                 </tr>
                                 <tr v-if="tasks.length === 0">
-                                    <td colspan="4" class="text-center text-muted py-3">No tasks found.</td>
+                                    <td colspan="4" class="text-center text-muted py-3">{{ trans.no_tasks }}</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -102,34 +98,32 @@
                 </div>
             </div>
 
-            <!-- Manual Trigger -->
             <div class="col-md-4">
                 <div class="card">
                     <div class="card-header bg-white">
-                        <h5 class="mb-0">Add Manual Task</h5>
+                        <h5 class="mb-0">{{ trans.manual_task }}</h5>
                     </div>
                     <div class="card-body">
                         <div class="mb-3">
-                            <label class="form-label">Topic / Keyword</label>
-                            <input type="text" class="form-control" v-model="newTaskTopic" placeholder="e.g. GPT-5, Quantum Computing" @keyup.enter="addTask">
+                            <label class="form-label">{{ trans.label_topic }}</label>
+                            <input type="text" class="form-control" v-model="newTaskTopic" placeholder="{{ trans.placeholder_topic }}" @keyup.enter="addTask">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Priority</label>
+                            <label class="form-label">{{ trans.label_priority }}</label>
                             <select class="form-select" v-model="newTaskPriority">
-                                <option value="10">High (Immediate)</option>
-                                <option value="5">Normal</option>
+                                <option value="10">{{ trans.prio_high }}</option>
+                                <option value="5">{{ trans.prio_normal }}</option>
                             </select>
                         </div>
                         <button class="btn btn-primary w-100" @click="addTask" :disabled="!newTaskTopic">
-                            <i class="bi bi-plus-circle"></i> Add to Queue
+                            <i class="bi bi-plus-circle"></i> {{ trans.btn_add }}
                         </button>
                     </div>
                 </div>
 
-                <!-- Recent Logs (Simplified) -->
                 <div class="card mt-3">
                     <div class="card-header bg-white">
-                        <h5 class="mb-0">System Logs</h5>
+                        <h5 class="mb-0">{{ trans.logs }}</h5>
                     </div>
                     <div class="card-body bg-dark text-light font-monospace" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;">
                         <div v-for="log in logs">[[ log ]]</div>
@@ -139,7 +133,6 @@
         </div>
     </div>
 
-    <!-- Vue.js Logic -->
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script>
