@@ -1,5 +1,5 @@
 # /opt/auto-wiki/src/scheduler/task_manager.py
-# タスク管理マネージャー
+# タスク管理マネージャー (v2.7 - 自動メンテナンス機能追加)
 # 目的: タスクのキューイング、トレンド情報の取得、DB操作を行う
 
 import sqlite3
@@ -45,6 +45,46 @@ class WikiScheduler:
             print(f"🔄 Reset {cursor.rowcount} stuck tasks from RUNNING to PENDING.")
         conn.commit()
         conn.close()
+
+    def schedule_maintenance_tasks(self, interval_days=7):
+        """
+        アイドル時に実行: 古い記事を再チェックリストに追加する
+        最終更新から interval_days 以上経過した記事を PENDING に戻す
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        # 最終実行が古く、かつ現在実行中でないタスクを探す
+        threshold = datetime.now() - timedelta(days=interval_days)
+        
+        # next_run が NULL (完了済み) のもので、last_run が古いものを対象にする
+        cursor.execute('''
+            SELECT id, topic FROM tasks 
+            WHERE status = 'FINISHED' 
+            AND (last_run IS NULL OR last_run < ?)
+            ORDER BY last_run ASC
+            LIMIT 1
+        ''', (threshold,))
+        
+        row = cursor.fetchone()
+        if row:
+            task_id, topic = row
+            print(f"♻️  Scheduling maintenance for old article: {topic}")
+            
+            # 低優先度(priority=3)で再スケジュール
+            # next_run を現在時刻にして即時実行候補にする
+            cursor.execute('''
+                UPDATE tasks 
+                SET status = 'PENDING', priority = 3, next_run = ? 
+                WHERE id = ?
+            ''', (datetime.now(), task_id))
+            
+            conn.commit()
+            conn.close()
+            return True # タスクを追加した
+            
+        conn.close()
+        return False # 追加するものはなかった
 
     def fetch_external_trends(self):
         """Google Trends (RSS) から急上昇ワードを取得してタスクに追加"""
@@ -111,9 +151,6 @@ class WikiScheduler:
         now = datetime.now()
 
         # --- ゾンビタスクの救出 ---
-        # RUNNING状態のまま30分以上経過しているタスクがあればPENDINGに戻す
-        # (Botが処理中にエラーで落ちてステータス更新できなかった場合の対策)
-        # ここでは last_run を「実行開始時刻」として利用して判定する
         timeout_threshold = now - timedelta(minutes=30)
         cursor.execute('''
             UPDATE tasks 
@@ -135,7 +172,7 @@ class WikiScheduler:
         row = cursor.fetchone()
         if row:
             task_id, topic = row
-            # RUNNINGにする際、last_runに現在時刻（開始時刻）を入れることでタイムアウト判定に使う
+            # RUNNINGにする際、last_runに現在時刻（開始時刻）を入れる
             cursor.execute("UPDATE tasks SET status = 'RUNNING', last_run = ? WHERE id = ?", (now, task_id))
             conn.commit()
             conn.close()
