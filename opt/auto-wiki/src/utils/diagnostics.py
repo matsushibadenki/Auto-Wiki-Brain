@@ -72,11 +72,3 @@ class SystemDiagnostics:
             return {"name": "Disk Space", "status": "OK", "msg": f"Healthy ({free_gb}GB free)"}
         except Exception as e:
             return {"name": "Disk Space", "status": "FAIL", "msg": str(e)}
-```
-
-### 再起動手順
-
-修正が終わったら、以下のコマンドでダッシュボードを再作成してください。
-
-```bash
-docker compose up -d dashboard-ja
