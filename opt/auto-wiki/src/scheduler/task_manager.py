@@ -12,6 +12,7 @@ class WikiScheduler:
         self.db_path = db_path
         self.rss_url = rss_url
         self._init_db()
+        self._reset_stuck_tasks() # 起動時にスタックしたタスクをリセット
 
     def _init_db(self):
         """データベースとテーブルの初期化"""
@@ -28,6 +29,16 @@ class WikiScheduler:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        conn.commit()
+        conn.close()
+
+    def _reset_stuck_tasks(self):
+        """起動時にRUNNING状態のままのタスクをPENDINGに戻す（異常終了対策）"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE tasks SET status = 'PENDING' WHERE status = 'RUNNING'")
+        if cursor.rowcount > 0:
+            print(f"🔄 Reset {cursor.rowcount} stuck tasks from RUNNING to PENDING.")
         conn.commit()
         conn.close()
 
