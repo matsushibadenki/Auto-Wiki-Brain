@@ -1,15 +1,14 @@
 # /opt/auto-wiki/src/bot/wiki_bot.py
-# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.3 - Deep Research搭載)
+# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.4 - 既存記事の監査・改善機能搭載)
 # 目的: 記事の調査(Deep)・吟味・画像・執筆・レビュー・リンク生成・投稿のワークフロー制御
 
 import os
 import mwclient
 from openai import OpenAI
-# from duckduckgo_search import DDGS  <-- 削除またはコメントアウト
 from src.bot.commons import CommonsAgent
 from src.bot.vetter import InformationVetter
 from src.bot.reviewer import ArticleReviewer
-from src.bot.researcher import DeepResearcher # 追加
+from src.bot.researcher import DeepResearcher
 from src.rag.vector_store import WikiVectorDB
 
 class LocalWikiBotV2:
@@ -29,8 +28,7 @@ class LocalWikiBotV2:
         self.model_name = model_name
         
         # 3. エージェント初期化
-        # self.ddgs = DDGS() <-- Researcherに移行するため削除
-        self.researcher = DeepResearcher(self.client, model_name, lang=lang) # 追加
+        self.researcher = DeepResearcher(self.client, model_name, lang=lang)
         self.commons = CommonsAgent(self.client, model_name)
         self.vetter = InformationVetter(self.client, model_name, lang=lang)
         self.reviewer = ArticleReviewer(self.client, model_name, lang=lang)
@@ -43,10 +41,21 @@ class LocalWikiBotV2:
         """
         print(f"\n📘 Processing Topic ({self.lang}): {topic}")
 
+        # --- Phase 0: 既存記事の確認 ---
+        page = self.site.pages[topic]
+        old_text = ""
+        is_existing = False
+        
+        if page.exists:
+            print(f"   ℹ️ Article '{topic}' already exists. Checking for improvements...")
+            old_text = page.text()
+            is_existing = True
+        else:
+            print(f"   🆕 Creating NEW article: {topic}")
+
         # --- Phase 1: Deep Discovery & Research (深層調査) ---
-        # 単純な検索ではなく、サブトピックを含めた調査を実行
         try:
-            # Note: Researcher内で整形済みのテキストが返ってくる
+            # 既存記事がある場合でも、最新情報との整合性をチェックするためにリサーチは必須
             raw_research_text = self.researcher.conduct_deep_research(topic)
         except Exception as e:
             print(f"❌ Research phase failed: {e}")
@@ -57,37 +66,37 @@ class LocalWikiBotV2:
             return
 
         # --- Phase 2: Vetting (情報の吟味) ---
-        # Note: Researcherの出力はテキスト形式なので、Vetterには少し加工して渡すか、
-        # あるいはVetter自体を「テキストベースの要約」モードで使う。
-        # ここでは既存のVetterロジック（リストを受け取る前提）を維持するため、簡易リスト化するか、
-        # あるいはVetterをスキップしてResearcherの出力を信じる手もあるが、
-        # ここでは「検索結果テキスト」をそのまま使う形にVetterを経由せず直接渡すフローに変更（Researcherが信頼性フィルタも兼ねているため）
-        
-        # ただし、元の設計思想「吟味」を残すなら、Researcherの結果をLLMに「Wikiに使える情報だけ抽出して」と頼むのがベスト。
-        # 今回はResearcherが既にフィルタリングしているので、この情報を Trusted Sources とする。
         vetted_info = raw_research_text 
         
         # --- Phase 3: Media Enrichment (画像選定) ---
         image_instruction = ""
-        try:
-            images = self.commons.search_images(topic)
-            best_image = self.commons.select_best_image(topic, images)
-            if best_image:
-                clean_name = best_image.replace("File:", "")
-                if self.lang == "ja":
-                    image_instruction = f"\n[画像指示]\n記事の冒頭または適切な位置に [[File:{clean_name}|thumb|250px|{topic}]] を配置してください。"
-                else:
-                    image_instruction = f"\n[Image Instruction]\nPlease place [[File:{clean_name}|thumb|250px|{topic}]] at the beginning or appropriate position."
-        except Exception as e:
-            print(f"⚠️ Image search failed: {e}")
+        # 画像がない場合のみ検索（既存記事の画像を尊重）
+        if not is_existing or ("[[File:" not in old_text and "[[ファイル:" not in old_text):
+            try:
+                images = self.commons.search_images(topic)
+                best_image = self.commons.select_best_image(topic, images)
+                if best_image:
+                    clean_name = best_image.replace("File:", "")
+                    if self.lang == "ja":
+                        image_instruction = f"\n[画像指示]\n記事の冒頭または適切な位置に [[File:{clean_name}|thumb|250px|{topic}]] を配置してください。"
+                    else:
+                        image_instruction = f"\n[Image Instruction]\nPlease place [[File:{clean_name}|thumb|250px|{topic}]] at the beginning or appropriate position."
+            except Exception as e:
+                print(f"⚠️ Image search failed: {e}")
 
-        # --- Phase 4: Writing (執筆) ---
-        page = self.site.pages[topic]
-        old_text = page.text()
+        # --- Phase 4: Writing / Auditing (執筆・監査) ---
         
-        prompt = self._build_prompt(topic, old_text, vetted_info, image_instruction)
+        if is_existing:
+            # 既存記事の監査・修正モード
+            prompt = self._build_audit_prompt(topic, old_text, vetted_info, image_instruction)
+            action_type = "Auditing & Updating"
+        else:
+            # 新規作成モード
+            prompt = self._build_creation_prompt(topic, old_text, vetted_info, image_instruction)
+            action_type = "Creating"
         
-        print("✍️  Generating content with Local LLM...")
+        print(f"✍️  {action_type} content with Local LLM...")
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
@@ -101,7 +110,11 @@ class LocalWikiBotV2:
 
         # --- Phase 4.5: Review & Refine (レビューと修正) ---
         if "NO_CHANGE" not in draft_text:
-            # vetted_info (raw_research_text) をソースとして渡してレビュー
+            # ドラフトが空でないか確認
+            if not draft_text or len(draft_text) < 50:
+                print("⚠️ Generated draft is too short or empty. Skipping.")
+                return
+
             is_approved, feedback = self.reviewer.review_draft(topic, draft_text, vetted_info)
             if not is_approved:
                 draft_text = self.reviewer.refine_draft(topic, draft_text, feedback)
@@ -109,23 +122,37 @@ class LocalWikiBotV2:
         # --- Phase 4.6: Internal Linking (内部リンク生成) ---
         if "NO_CHANGE" not in draft_text:
             try:
-                see_also = self._generate_see_also(topic)
-                if see_also:
-                    draft_text += f"\n\n{see_also}"
+                # 既存記事の場合は、既にリンクがあるかもしれないので慎重に追加
+                if "== 関連項目 ==" not in draft_text and "== See Also ==" not in draft_text:
+                    see_also = self._generate_see_also(topic)
+                    if see_also:
+                        draft_text += f"\n\n{see_also}"
             except Exception as e:
                 print(f"⚠️ Internal linking failed: {e}")
 
         # --- Phase 5: Publishing (投稿) ---
         if "NO_CHANGE" not in draft_text and len(draft_text) > 50:
-            summary = "Auto-update via Local LLM (Deep Research & Reviewed)"
+            # 変更がある場合のみ保存
+            summary = ""
+            if is_existing:
+                summary = "Auto-update: Verified facts, added missing info, and corrected errors."
+            else:
+                summary = "Created new article via Auto-Wiki-Brain."
+                
             final_text = draft_text.replace("```wikitext", "").replace("```", "")
             
+            # 既存記事と全く同じなら保存しない（API負荷軽減）
+            if is_existing and final_text.strip() == old_text.strip():
+                print("⏹️  Content is identical. No update needed.")
+                return
+
             page.save(final_text, summary=summary)
             print("✅ Article saved successfully.")
             
+            # ベクトルDBも更新
             self.vector_db.upsert_article(topic, final_text)
         else:
-            print("⏹️  No significant changes generated.")
+            print("⏹️  No significant changes generated (Bot decided to keep current version).")
 
     def _generate_see_also(self, topic: str) -> str:
         """関連する既存記事へのリンク集を生成する"""
@@ -159,43 +186,91 @@ class LocalWikiBotV2:
                 pass
         return None
 
-    def _build_prompt(self, topic, old_text, info, image_inst):
+    def _build_creation_prompt(self, topic, old_text, info, image_inst):
+        """新規作成用のプロンプト"""
         data_section = f"""
         # Target Topic
         {topic}
-        # Trusted Sources (Based on Deep Research)
+        # Trusted Sources
         {info}
         # Image Instructions
         {image_inst}
-        # Existing Article Content
-        {old_text[:3000]}...
         """
-
+        
         policy = self._load_custom_policy()
-        if policy:
-            return f"{policy}\n\n{data_section}\n\nOutput the full updated article in Wikitext format."
+        base_inst = policy if policy else "You are a Wikipedia editor."
 
         if self.lang == "en":
             return f"""
-            You are an expert Wikipedia editor.
-            Update the article for topic "{topic}" based on the latest information.
+            {base_inst}
+            Create a comprehensive Wikipedia article for "{topic}".
             # Rules
-            1. No hallucinations. Use only provided information.
-            2. Integrate new info into existing content.
-            3. Maintain Neutral Point of View (NPOV).
-            4. Output ONLY Wikitext format.
+            1. Use ONLY provided sources.
+            2. Neutral Point of View.
+            3. Output ONLY Wikitext.
             {data_section}
-            Output the full updated article. If no changes needed, output "NO_CHANGE".
+            Output the full article text.
             """
         else:
             return f"""
-            あなたはWikipediaの熟練編集者です。
-            トピック「{topic}」について、最新情報に基づき記事を更新してください。
+            {base_inst}
+            トピック「{topic}」のWikipedia記事を新規作成してください。
             # ルール
-            1. 嘘（ハルシネーション）は厳禁です。提供された情報のみを使用してください。
-            2. 既存の記事を破壊せず、新しい情報を統合してください。
-            3. 中立的な観点（NPOV）で記述してください。
-            4. 出力はWiki構文（Wikitext）のみで行ってください。
+            1. 提供された情報源のみを使用すること。
+            2. 中立的な観点で記述すること。
+            3. 出力はWiki構文のみにすること。
             {data_section}
-            更新された記事全文を出力してください。変更不要なら "NO_CHANGE" と出力してください。
+            記事全文を出力してください。
+            """
+
+    def _build_audit_prompt(self, topic, old_text, info, image_inst):
+        """既存記事の監査・修正用プロンプト"""
+        data_section = f"""
+        # Target Topic
+        {topic}
+        # Trusted Sources (Latest Info)
+        {info}
+        # Current Article Content
+        {old_text}
+        # Image Instructions
+        {image_inst}
+        """
+
+        if self.lang == "en":
+            return f"""
+            You are a senior Wikipedia editor tasked with auditing and improving an existing article.
+            Topic: "{topic}"
+
+            # Your Task
+            Compare the "Current Article Content" with the "Trusted Sources".
+            1. **Verify**: Are there any factual errors in the current article? If so, correct them.
+            2. **Update**: Is there new information in the sources that is missing? If so, add it.
+            3. **Structure**: Improve the formatting if needed.
+            4. **Images**: Add the image if instructed and not already present.
+
+            # Output Rules
+            - If the article is already perfect and accurate, output ONLY "NO_CHANGE".
+            - If changes are needed, output the **Full Rewritten Article** in Wikitext.
+            - Do NOT explain your changes, just output the code.
+            
+            {data_section}
+            """
+        else:
+            return f"""
+            あなたはWikipediaのシニア編集者です。既存の記事を監査し、改善する任務があります。
+            トピック: 「{topic}」
+
+            # あなたの仕事
+            「現在の記事内容」と「信頼できる情報源（最新情報）」を比較してください。
+            1. **検証**: 記事に誤った情報はありませんか？あれば訂正してください。
+            2. **加筆**: 情報源にある重要な情報で、記事に欠けているものはありますか？あれば適切なセクションに追記してください。
+            3. **構造**: フォーマットや見出しを整理してください。
+            4. **画像**: 画像指示があり、記事にまだ画像がない場合は追加してください。
+
+            # 出力ルール
+            - 記事が既に正確で十分な場合、"NO_CHANGE" とだけ出力してください。
+            - 修正が必要な場合、**修正後の記事全文**をWiki構文で出力してください。
+            - 修正箇所の説明は不要です。コードのみを出力してください。
+
+            {data_section}
             """
