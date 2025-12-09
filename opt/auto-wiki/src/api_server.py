@@ -6,7 +6,7 @@ import os
 import psutil
 from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse  # RedirectResponseを追加
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 import secrets
@@ -129,7 +129,6 @@ class ChatRequest(BaseModel):
 
 # --- Endpoints ---
 
-# [NEW] ルートアクセス時のリダイレクト
 @app.get("/")
 async def root():
     return RedirectResponse(url="/dashboard")
@@ -251,11 +250,3 @@ def chat_with_brain(req: ChatRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-```
-
-### 反映手順
-
-1.  上記のコードで `opt/auto-wiki/src/api_server.py` を上書き保存します。
-2.  ダッシュボードコンテナを再起動します。
-    ```bash
-    docker compose restart dashboard-ja
