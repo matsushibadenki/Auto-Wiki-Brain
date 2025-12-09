@@ -1,6 +1,6 @@
 # /opt/auto-wiki/src/bot/wiki_bot.py
-# 自律型Wiki Botのメインロジック
-# 目的: 記事の検索・吟味・画像選定・執筆・投稿のワークフロー制御、および内部リンクの構築
+# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.2)
+# 目的: 記事の検索・吟味・画像選定・執筆・レビュー・リンク生成・投稿のワークフロー制御
 
 import os
 import mwclient
@@ -8,6 +8,7 @@ from openai import OpenAI
 from duckduckgo_search import DDGS
 from src.bot.commons import CommonsAgent
 from src.bot.vetter import InformationVetter
+from src.bot.reviewer import ArticleReviewer  # 追加
 from src.rag.vector_store import WikiVectorDB
 
 class LocalWikiBotV2:
@@ -30,11 +31,12 @@ class LocalWikiBotV2:
         self.ddgs = DDGS()
         self.commons = CommonsAgent(self.client, model_name)
         self.vetter = InformationVetter(self.client, model_name, lang=lang)
+        self.reviewer = ArticleReviewer(self.client, model_name, lang=lang) # 追加
         self.vector_db = WikiVectorDB()
 
     def update_article(self, topic: str):
         """
-        記事のライフサイクル管理: 検索 -> 吟味 -> 画像選定 -> 執筆 -> 内部リンク生成 -> 投稿
+        記事のライフサイクル管理: 検索 -> 吟味 -> 画像 -> 執筆 -> [レビュー&修正] -> [内部リンク] -> 投稿
         """
         print(f"\n📘 Processing Topic ({self.lang}): {topic}")
 
@@ -83,128 +85,113 @@ class LocalWikiBotV2:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             )
-            new_text = response.choices[0].message.content
+            draft_text = response.choices[0].message.content
         except Exception as e:
             print(f"❌ Generation failed: {e}")
             return
 
-        # --- Phase 4.5: Internal Linking (内部リンク生成) [NEW] ---
-        # 既存の機能を維持しつつ、関連項目の自動生成を追加
-        try:
-            see_also_section = self._generate_see_also(topic)
-            if see_also_section:
-                # 記事の末尾に追加（カテゴリの前などが望ましいが、簡易的に末尾へ）
-                new_text += f"\n\n{see_also_section}"
-        except Exception as e:
-            print(f"⚠️ Internal linking failed: {e}")
+        # --- Phase 4.5: Review & Refine (レビューと修正) [NEW] ---
+        if "NO_CHANGE" not in draft_text:
+            is_approved, feedback = self.reviewer.review_draft(topic, draft_text, vetted_info)
+            if not is_approved:
+                # 修正指示に基づいてリライト
+                draft_text = self.reviewer.refine_draft(topic, draft_text, feedback)
+
+        # --- Phase 4.6: Internal Linking (内部リンク生成) [NEW] ---
+        if "NO_CHANGE" not in draft_text:
+            try:
+                see_also = self._generate_see_also(topic)
+                if see_also:
+                    # 既存の "== 関連項目 ==" があれば避けるなどの処理が理想だが、簡易的に末尾追記
+                    draft_text += f"\n\n{see_also}"
+            except Exception as e:
+                print(f"⚠️ Internal linking failed: {e}")
 
         # --- Phase 5: Publishing (投稿) ---
-        if "NO_CHANGE" not in new_text and len(new_text) > 50:
-            summary = "Auto-update via Local LLM"
-            new_text = new_text.replace("```wikitext", "").replace("```", "")
-            page.save(new_text, summary=summary)
+        if "NO_CHANGE" not in draft_text and len(draft_text) > 50:
+            summary = "Auto-update via Local LLM (Reviewed)"
+            final_text = draft_text.replace("```wikitext", "").replace("```", "")
+            
+            # 保存
+            page.save(final_text, summary=summary)
             print("✅ Article saved successfully.")
             
             # ベクトルDBも更新
-            self.vector_db.upsert_article(topic, new_text)
+            self.vector_db.upsert_article(topic, final_text)
         else:
             print("⏹️  No significant changes generated.")
 
     def _generate_see_also(self, topic: str) -> str:
-        """
-        ベクトルDBを検索し、関連する既存記事へのリンク集を生成する
-        """
+        """関連する既存記事へのリンク集を生成する"""
         print("🔗 Generating internal links...")
-        # 自分自身を除外するために少し多めに取得
-        results = self.vector_db.search(topic, n_results=5)
-        
-        if not results or not results['ids']:
-            return ""
+        try:
+            results = self.vector_db.search(topic, n_results=5)
+            if not results or not results['ids']: return ""
 
-        related_topics = []
-        ids = results['ids'][0] # ChromaDB returns list of lists
-        
-        for related_id in ids:
-            # 自分自身はリンクしない
-            if related_id != topic:
-                related_topics.append(f"* [[{related_id}]]")
-        
-        if not related_topics:
-            return ""
-        
-        # 重複排除
-        related_topics = list(set(related_topics))
+            related_topics = []
+            ids = results['ids'][0]
+            
+            for related_id in ids:
+                if related_id != topic:
+                    related_topics.append(f"* [[{related_id}]]")
+            
+            if not related_topics: return ""
+            related_topics = list(set(related_topics)) # 重複排除
 
-        if self.lang == "ja":
-            return "== 関連項目 ==\n" + "\n".join(related_topics)
-        else:
-            return "== See Also ==\n" + "\n".join(related_topics)
+            header = "== 関連項目 ==" if self.lang == "ja" else "== See Also =="
+            return f"{header}\n" + "\n".join(related_topics)
+        except:
+            return ""
 
     def _load_custom_policy(self):
         """外部ファイルから編集方針（システムプロンプト）を読み込む"""
         path = f"/app/config/edit_policy_{self.lang}.txt"
-        
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    print(f"📜 Custom policy loaded: {path}")
                     return f.read().strip()
-            except Exception as e:
-                print(f"⚠️ Failed to load custom policy: {e}")
+            except:
+                pass
         return None
 
     def _build_prompt(self, topic, old_text, info, image_inst):
-        # 1. コンテキストデータの構築
         data_section = f"""
         # Target Topic
         {topic}
-
-        # Trusted Sources (Information to be used)
+        # Trusted Sources
         {info}
-
         # Image Instructions
         {image_inst}
-
-        # Existing Article Content (For reference/update)
+        # Existing Article Content
         {old_text[:3000]}...
         """
 
-        # 2. 編集方針（システムプロンプト）の決定
         policy = self._load_custom_policy()
-
         if policy:
             return f"{policy}\n\n{data_section}\n\nOutput the full updated article in Wikitext format."
 
-        # デフォルトポリシー（英語/日本語）
+        # デフォルトポリシー
         if self.lang == "en":
             return f"""
             You are an expert Wikipedia editor.
             Update the article for topic "{topic}" based on the latest information.
-
             # Rules
             1. No hallucinations. Use only provided information.
-            2. Integrate new info into existing content. Do not destroy existing structure.
+            2. Integrate new info into existing content.
             3. Maintain Neutral Point of View (NPOV).
-            4. Output ONLY Wikitext format. No Markdown.
-            5. Start with a definition.
-
+            4. Output ONLY Wikitext format.
             {data_section}
-
-            Output the full updated article. If no changes are needed, output "NO_CHANGE".
+            Output the full updated article. If no changes needed, output "NO_CHANGE".
             """
         else:
             return f"""
             あなたはWikipediaの熟練編集者です。
             トピック「{topic}」について、最新情報に基づき記事を更新してください。
-
             # ルール
             1. 嘘（ハルシネーション）は厳禁です。提供された情報のみを使用してください。
-            2. 既存の記事がある場合は、破壊せず、新しい情報を「追記」または「古い情報の更新」として統合してください。
-            3. 常に中立的な観点（NPOV）で記述してください。
-            4. 出力はWiki構文（Wikitext）のみで行ってください。Markdownは使用しないでください。
-            5. 記事の冒頭は定義から始めてください。
-
+            2. 既存の記事を破壊せず、新しい情報を統合してください。
+            3. 中立的な観点（NPOV）で記述してください。
+            4. 出力はWiki構文（Wikitext）のみで行ってください。
             {data_section}
-
-            更新された記事全文を出力してください。変更が不要な場合は "NO_CHANGE" と出力してください。
+            更新された記事全文を出力してください。変更不要なら "NO_CHANGE" と出力してください。
             """
