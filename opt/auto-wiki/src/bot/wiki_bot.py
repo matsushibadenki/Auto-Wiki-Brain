@@ -109,18 +109,24 @@ class LocalWikiBotV2:
             print(f"❌ Generation failed: {e}")
             return
 
-        # --- Phase 4.5: Review & Refine (レビューと修正) ---
-        # 既存記事の追記の場合はレビュー基準を少し緩める（構成崩れのリスクが減るため）
-        if "NO_CHANGE" not in draft_text:
-            # ドラフトが空でないか確認
+        # --- Phase 4.5: Review & Refine (Optional for Speed) ---
+        # 【改善】ドラフト生成に成功していれば、必ずしも毎回レビューを通さなくて良い運用にする
+        # 特に「追記モード(is_existing)」の場合は、リスクが低いのでスキップして速度を稼ぐ
+        
+        need_review = True
+        if is_existing: 
+            print("⏩ Skipping heavy review for incremental update to save time.")
+            need_review = False
+
+        if need_review and "NO_CHANGE" not in draft_text:
             if not draft_text or len(draft_text) < 50:
                 print("⚠️ Generated draft is too short or empty. Skipping.")
                 return
 
+            print("🧐 conducting quality review...")
             is_approved, feedback = self.reviewer.review_draft(topic, draft_text, vetted_info)
             if not is_approved:
                 draft_text = self.reviewer.refine_draft(topic, draft_text, feedback)
-
         # --- Phase 4.6: Internal Linking (内部リンク生成) ---
         # 追記の場合もリンクは有用だが、既存テキスト内のリンクは触らない
         if "NO_CHANGE" not in draft_text and not is_existing:
