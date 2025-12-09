@@ -1,6 +1,5 @@
 # /opt/auto-wiki/src/api_server.py
-# 日本語タイトル: RAG APIサーバー + システム管理ダッシュボード (v2.4 - Root Redirect)
-# 目的: 管理画面の提供、およびRAGチャット機能、システム診断のバックエンド処理
+# 日本語タイトル: RAG APIサーバー + システム管理ダッシュボード (Log-Enabled + Task Deletion)
 
 import os
 import psutil
@@ -18,12 +17,7 @@ from src.scheduler.task_manager import WikiScheduler
 from src.rag.vector_store import WikiVectorDB
 from src.utils.diagnostics import SystemDiagnostics
 
-app = FastAPI(
-    title="Auto-Wiki Control Panel",
-    description="自律型Wikiシステムの管理とRAG API",
-    version="2.4.0"
-)
-
+app = FastAPI(title="Auto-Wiki Control Panel", version="2.6.0")
 templates = Jinja2Templates(directory="/app/src/templates")
 security = HTTPBasic()
 
@@ -32,14 +26,14 @@ scheduler = WikiScheduler(db_path="/app/scheduler.db")
 vector_db = WikiVectorDB()
 diagnostics = SystemDiagnostics()
 
-# LLM接続 (Ollama) - チャット応答用
+# LLM接続
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemma2")
 llm_client = OpenAI(base_url=OLLAMA_HOST, api_key="ollama")
 
-# --- 言語設定と翻訳辞書 ---
 SYSTEM_LANG = os.getenv("WIKI_LANG", "ja")
 
+# 翻訳辞書 (省略せず保持)
 TRANSLATIONS = {
     "ja": {
         "title": "Auto-Wiki Brain 管理パネル",
@@ -57,6 +51,7 @@ TRANSLATIONS = {
         "col_priority": "優先度",
         "col_status": "ステータス",
         "col_next": "次回実行",
+        "col_action": "操作", # 追加
         "no_tasks": "タスクはありません。",
         "manual_task": "手動タスク追加",
         "label_topic": "トピック / キーワード",
@@ -85,6 +80,7 @@ TRANSLATIONS = {
         "col_priority": "Priority",
         "col_status": "Status",
         "col_next": "Next Run",
+        "col_action": "Action", # 追加
         "no_tasks": "No tasks found.",
         "manual_task": "Add Manual Task",
         "label_topic": "Topic / Keyword",
@@ -99,23 +95,14 @@ TRANSLATIONS = {
     }
 }
 
-# --- 認証ロジック ---
 def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = os.getenv("ADMIN_USER", "admin").encode("utf8")
     correct_password = os.getenv("ADMIN_PASS", "password").encode("utf8")
-    
-    is_correct_username = secrets.compare_digest(credentials.username.encode("utf8"), correct_username)
-    is_correct_password = secrets.compare_digest(credentials.password.encode("utf8"), correct_password)
-    
-    if not (is_correct_username and is_correct_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+    if not (secrets.compare_digest(credentials.username.encode("utf8"), correct_username) and
+            secrets.compare_digest(credentials.password.encode("utf8"), correct_password)):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password", headers={"WWW-Authenticate": "Basic"})
     return credentials.username
 
-# --- API Models ---
 class TaskCreate(BaseModel):
     topic: str
     priority: int = 10
@@ -127,8 +114,6 @@ class SearchQuery(BaseModel):
 class ChatRequest(BaseModel):
     message: str
 
-# --- Endpoints ---
-
 @app.get("/")
 async def root():
     return RedirectResponse(url="/dashboard")
@@ -136,28 +121,19 @@ async def root():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, username: str = Depends(get_current_username)):
     trans = TRANSLATIONS.get(SYSTEM_LANG, TRANSLATIONS["en"])
-    return templates.TemplateResponse(
-        "dashboard.html", 
-        {
-            "request": request, 
-            "username": username,
-            "lang": SYSTEM_LANG,
-            "trans": trans
-        }
-    )
+    return templates.TemplateResponse("dashboard.html", {"request": request, "username": username, "lang": SYSTEM_LANG, "trans": trans})
 
 @app.get("/api/status")
 def get_system_status(username: str = Depends(get_current_username)):
     vm = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
-    ollama_status = "Online" 
     return {
         "cpu_percent": psutil.cpu_percent(interval=None),
         "memory_percent": vm.percent,
         "memory_used_gb": round(vm.used / (1024**3), 2),
         "memory_total_gb": round(vm.total / (1024**3), 2),
         "disk_free_gb": round(disk.free / (1024**3), 2),
-        "ollama_status": ollama_status
+        "ollama_status": "Online"
     }
 
 @app.get("/api/tasks")
@@ -169,23 +145,41 @@ def add_manual_task(task: TaskCreate, username: str = Depends(get_current_userna
     scheduler.add_or_update_task(task.topic, priority=task.priority)
     return {"message": f"Task '{task.topic}' added successfully."}
 
+# --- 追加: タスク削除エンドポイント ---
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int, username: str = Depends(get_current_username)):
+    try:
+        scheduler.delete_task(task_id)
+        return {"message": f"Task ID {task_id} deleted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/logs")
 def get_bot_logs(username: str = Depends(get_current_username)):
-    return {"logs": ["Logs should be viewed via 'docker compose logs' in production."]}
-
-# --- Diagnostics Endpoints ---
+    """Botのログファイルを読み込んで返す"""
+    log_path = "/app/src/bot.log"
+    logs = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                # 最後の30行を取得して新しい順に並べる
+                lines = f.readlines()
+                logs = [line.strip() for line in lines[-30:]]
+                logs.reverse() 
+        except Exception:
+            logs = ["Could not read log file."]
+    else:
+        logs = ["Waiting for bot activity..."]
+    
+    return {"logs": logs}
 
 @app.get("/api/diagnostics/run")
 def run_system_diagnostics(username: str = Depends(get_current_username)):
-    """システム診断を実行して結果を返す"""
     results = diagnostics.run_all_checks()
     return {"results": results}
 
-# --- RAG Endpoints ---
-
 @app.post("/api/rag/search")
 def search_knowledge_base(query: SearchQuery):
-    """単純なベクトル検索結果を返す"""
     results = vector_db.search(query.query, n_results=query.limit)
     return {
         "query": query.query,
@@ -195,12 +189,7 @@ def search_knowledge_base(query: SearchQuery):
 
 @app.post("/api/rag/chat")
 def chat_with_brain(req: ChatRequest):
-    """
-    Wiki Brainとの対話API
-    """
     user_msg = req.message
-    
-    # 1. 知識検索
     search_res = vector_db.search(user_msg, n_results=3)
     documents = search_res['documents'][0]
     metadatas = search_res['metadatas'][0]
@@ -213,26 +202,14 @@ def chat_with_brain(req: ChatRequest):
     if not context_text:
         context_text = "No relevant knowledge found in the database."
 
-    # 2. 回答生成
-    system_prompt = """
-    You are 'Wiki Brain', an intelligent assistant powered by a local knowledge base.
-    Answer the user's question using ONLY the provided Context Information.
-    If the answer is not in the context, say "I don't have that information in my knowledge base yet."
-    """
+    system_prompt = "You are 'Wiki Brain'. Answer using the Context Information."
     if SYSTEM_LANG == "ja":
         system_prompt = """
-        あなたは「Wiki Brain」、ローカル知識ベースを持つAIアシスタントです。
-        以下の【参照知識】のみを使用して、ユーザーの質問に答えてください。
-        もし知識ベースに答えがない場合は、「私のデータベースにはまだその情報がありません。」と答えてください。
+        あなたは「Wiki Brain」です。以下の【参照知識】のみを使用して答えてください。
+        知識がない場合は「情報がありません」と答えてください。
         """
 
-    prompt = f"""
-    【参照知識】
-    {context_text}
-
-    【ユーザーの質問】
-    {user_msg}
-    """
+    prompt = f"【参照知識】\n{context_text}\n\n【質問】\n{user_msg}"
 
     try:
         resp = llm_client.chat.completions.create(
@@ -243,10 +220,6 @@ def chat_with_brain(req: ChatRequest):
             ],
             temperature=0.3
         )
-        answer = resp.choices[0].message.content
-        return {
-            "answer": answer,
-            "sources": [m.get("topic") for m in metadatas]
-        }
+        return {"answer": resp.choices[0].message.content, "sources": [m.get("topic") for m in metadatas]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
