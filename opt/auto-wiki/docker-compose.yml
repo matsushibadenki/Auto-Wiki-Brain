@@ -31,7 +31,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./data/mediawiki_html_ja:/var/www/html/
+      - ./data/mediawiki_html_ja/LocalSettings.php:/var/www/html/LocalSettings.php
       - ./data/mediawiki_images_ja:/var/www/html/images
     environment:
       - MW_DB_HOST=mariadb
@@ -101,7 +101,7 @@ services:
     ports:
       - "8081:80"
     volumes:
-      - ./data/mediawiki_html_en:/var/www/html/
+      - ./data/mediawiki_html_en/LocalSettings.php:/var/www/html/LocalSettings.php
       - ./data/mediawiki_images_en:/var/www/html/images
     environment:
       - MW_DB_HOST=mariadb
