@@ -1,6 +1,6 @@
 # /opt/auto-wiki/src/main.py
-# システム全体の司令塔
-# 目的: スケジューラーとBotのメインループを実行する
+# 日本語タイトル: システム全体の司令塔 (v2.2)
+# 目的: スケジューラー、Bot、およびファイル取込のメインループを実行する
 
 import time
 import schedule
@@ -12,6 +12,7 @@ sys.path.append("/app")
 
 from src.bot.wiki_bot import LocalWikiBotV2
 from src.scheduler.task_manager import WikiScheduler
+from src.rag.file_ingestor import LocalFileIngestor # 追加
 
 def main():
     # 環境変数からの設定読み込み
@@ -25,7 +26,7 @@ def main():
     OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434/v1")
     TRENDS_RSS = os.getenv("TRENDS_RSS", "https://trends.google.com/trends/trendingsearches/daily/rss?geo=JP")
 
-    # リトライロジック付きで初期化 (WikiやOllamaの起動待ち)
+    # リトライロジック付きで初期化
     max_retries = 10
     bot = None
     
@@ -38,7 +39,7 @@ def main():
                 bot_pass=BOT_PASS,
                 model_name=MODEL_NAME,
                 base_url=OLLAMA_HOST,
-                lang=WIKI_LANG  # 言語設定を渡す
+                lang=WIKI_LANG
             )
             print("✅ Connected to Wiki and AI!")
             break
@@ -50,14 +51,17 @@ def main():
         print("❌ Fatal Error: Could not connect to services.")
         return
 
-    # スケジューラーの初期化（RSS URLを渡す）
+    # スケジューラーとインジェスターの初期化
     scheduler = WikiScheduler(db_path="/app/scheduler.db", rss_url=TRENDS_RSS)
+    ingestor = LocalFileIngestor(input_dir="/app/data/inputs") # 追加
 
-    # 定期ジョブ: 4時間ごとにトレンド収集
+    # 定期ジョブ
     schedule.every(4).hours.do(scheduler.fetch_external_trends)
-    
-    # 初回起動時にトレンド取得を一回実行
+    schedule.every(10).minutes.do(ingestor.process_new_files) # 10分ごとにローカルファイルを確認
+
+    # 初回実行
     scheduler.fetch_external_trends()
+    ingestor.process_new_files()
 
     print("🔄 Starting main loop...")
     while True:
@@ -70,11 +74,9 @@ def main():
                 bot.update_article(task_topic)
                 scheduler.complete_task(task_topic)
                 
-                # GPU/CPU Cool down
                 print("💤 Cooling down (30s)...")
                 time.sleep(30)
             else:
-                # アイドル時は少し長めに待機
                 time.sleep(10)
                 
         except Exception as e:
