@@ -1,82 +1,242 @@
-# **Auto-Wiki-Brain: 自律進化型ローカルLLM知識ベースシステム**
+# Auto-Wiki-Brain
 
-## **1\. プロジェクト概要 (Overview)**
+**自律進化型ローカルLLM知識ベースシステム**
 
-Auto-Wiki-Brain は、人間の介入を必要とせず、インターネットから自動的に情報を収集・学習し、自身の知識（Wiki記事）を更新・拡張し続ける自律型AIシステムです。  
-Wikipediaの全データを初期知識として継承し、ローカルLLM（Ollama/Gemma/Llama）を活用することで、外部APIコストを極限まで抑えた運用を可能にします。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
-## **2\. コントロールパネル (Control Panel) \[NEW\]**
+人間の介入を必要とせず、インターネットから自動的に情報を収集・学習し、自身の知識（Wiki記事）を更新・拡張し続ける自律型AIシステムです。
 
-システムの稼働状況を可視化・操作するためのWebダッシュボードを提供します。
+## 特徴
 
-### **2.1 機能**
+- 🤖 **完全自律動作**: RSS/検索APIから自動でトピックを発見し、記事を執筆
+- 🧠 **ローカルLLM**: Ollama（Gemma/Llama）で外部APIコスト不要
+- 📚 **Wikipedia継承**: 全Wikiデータを初期知識として搭載
+- 📊 **Webダッシュボード**: リアルタイム監視・手動タスク実行
+- 🖼️ **画像自動取得**: Wikimedia Commonsから適切な画像を検索・挿入
 
-* **Status Monitor**: CPU/メモリ使用率、ディスク容量、Ollamaの接続状態をリアルタイム表示。  
-* **Task Queue**: 現在実行中のタスク、待機中のタスク、最近完了したタスクの一覧表示。  
-* **Manual Trigger**: 任意のキーワードを入力し、即座に調査・執筆タスクをキューに追加。  
-* **Log Viewer**: Botの活動ログ（検索クエリ、吟味結果など）の閲覧。
+## デモ
 
-### **2.2 アクセス方法**
+![Dashboard Screenshot](docs/images/dashboard.png)
 
-* URL: http://\<VPS\_IP\>:8000/dashboard  
-* 認証: Basic認証（.env ファイルの ADMIN\_USER, ADMIN\_PASS で設定）
+## クイックスタート
 
-## **3\. システムアーキテクチャ (Architecture)**
+### 必要要件
 
-graph TD  
-    Internet((Internet)) \--\>|RSS/Search| Scheduler\[Task Scheduler\]  
-    AdminUser((Admin User)) \--\>|Web UI| Dashboard\[Control Panel (FastAPI)\]  
-    Dashboard \--\>|Manage| Scheduler  
-      
-    subgraph "VPS Server (Docker)"  
-        Bot\[Wiki Bot Agent\] \--\>|Polls| Scheduler  
-        Bot \--\>|1. Search & Vetting| Ollama\[Local LLM (Ollama)\]  
-        Bot \--\>|2. Image Search| Commons\[Wikimedia Commons\]  
-        Bot \--\>|3. Update Article| MW\[MediaWiki\]  
-          
-        Dashboard \-.-\>|Monitor| Bot  
-        Dashboard \-.-\>|Monitor| Ollama  
+- Docker & Docker Compose
+- 2GB以上の空きメモリ（LLM実行用）
+- Ubuntu 20.04+ / Debian 11+ 推奨
+
+### インストール
+
+```bash
+# リポジトリをクローン
+git clone https://github.com/yourusername/auto-wiki-brain.git
+cd auto-wiki-brain
+
+# 環境変数を設定
+cp .env.example .env
+nano .env  # 各種パスワード・APIキーを設定
+
+# Dockerで起動
+docker-compose up -d
+
+# ダッシュボードにアクセス
+# http://localhost:8000/dashboard
+# デフォルト認証: admin / secret_dashboard_pass
+```
+
+### 初回セットアップ
+
+```bash
+# MediaWikiの初期設定（ブラウザで実行）
+# http://localhost:8080
+
+# Wikipediaダンプのインポート（オプション）
+docker exec -it auto-wiki-bot python src/import_wikipedia.py
+```
+
+## アーキテクチャ
+
+```mermaid
+graph TD
+    Internet((Internet)) -->|RSS/Search| Scheduler[Task Scheduler]
+    AdminUser((Admin User)) -->|Web UI| Dashboard[Control Panel]
+    Dashboard -->|Manage| Scheduler
+    
+    subgraph Docker Container
+        Bot[Wiki Bot Agent] -->|Polls| Scheduler
+        Bot -->|1. Search & Vetting| Ollama[Local LLM]
+        Bot -->|2. Image Search| Commons[Wikimedia Commons]
+        Bot -->|3. Update Article| MW[MediaWiki]
+        
+        Dashboard -.->|Monitor| Bot
+        Dashboard -.->|Monitor| Ollama
     end
+```
 
-## **4\. 技術仕様 (Technical Specifications)**
+## 主要機能
 
-### **4.1 ソフトウェアスタック (追加分)**
+### 1. コントロールパネル
 
-* **Dashboard UI**: HTML5 \+ Bootstrap 5 (Jinja2 Template)  
-* **Monitoring**: psutil (Python System Monitor)  
-* **Security**: HTTP Basic Auth
+**URL**: `http://localhost:8000/dashboard`
 
-## **5\. ディレクトリ構成 (Directory Structure)**
+- **Status Monitor**: CPU/メモリ/ディスク使用率をリアルタイム表示
+- **Task Queue**: 実行中・待機中・完了済みタスクの一覧
+- **Manual Trigger**: 任意キーワードで即座にタスク追加
+- **Log Viewer**: 検索クエリ・吟味結果などのログ閲覧
 
-src/templates/ ディレクトリを追加し、UIファイルを配置します。
+### 2. 自動情報収集
 
-/opt/auto-wiki/
-├── docker-compose.yml       # (確認済: 正しい場所にあります)
-├── maintenance.sh           # (確認済: 実行権限 chmod +x を忘れずに)
-├── Dockerfile               # ⚠️ Dockerfile.txt から名前変更が必要です
-├── .env                     # ⚠️ env.txt から名前変更が必要です
+- RSSフィードから新規トピック検出
+- Google Search APIで詳細情報を取得
+- LLMによる信頼性評価（Vetting）
+
+### 3. Wiki記事執筆
+
+- 既存記事の自動更新（差分追記）
+- 新規記事の作成（テンプレート自動選択）
+- 引用元URLの自動記録
+
+## ディレクトリ構成
+
+```
+auto-wiki-brain/
+├── docker-compose.yml
+├── Dockerfile
+├── .env.example
+├── maintenance.sh
+├── docs/
+│   ├── ARCHITECTURE.md
+│   └── images/
 ├── src/
-│   ├── main.py              # (確認済)
-│   ├── api_server.py        # (確認済)
+│   ├── main.py
+│   ├── api_server.py
 │   ├── templates/
-│   │   └── dashboard.html   # (確認済)
+│   │   └── dashboard.html
 │   ├── bot/
-│   │   ├── __init__.py      # (推奨: 空ファイルでOK)
-│   │   ├── wiki_bot.py      # (確認済)
-│   │   ├── commons.py       # (確認済)
-│   │   └── vetter.py        # (確認済)
+│   │   ├── wiki_bot.py
+│   │   ├── commons.py
+│   │   └── vetter.py
 │   ├── scheduler/
-│   │   ├── __init__.py      # (推奨: 空ファイルでOK)
-│   │   └── task_manager.py  # (確認済)
+│   │   └── task_manager.py
 │   └── rag/
-│       ├── __init__.py      # (推奨: 空ファイルでOK)
-│       └── vector_store.py  # (確認済)
-└── data/                    # (Docker起動時に自動作成されますが、フォルダだけ作っておくと安心です)
+│       └── vector_store.py
+└── data/
+    ├── vector_db/
+    └── logs/
+```
 
-## **6\. セットアップ手順 (Installation)**
+## 設定
 
-(基本手順は変更なし。.env に管理用パスワードを追加してください)
+`.env` ファイルで以下を設定:
 
-\# .env に以下を追加  
-ADMIN\_USER=admin  
-ADMIN\_PASS=secret\_dashboard\_pass  
+```bash
+# MediaWiki接続
+MEDIAWIKI_URL=http://mediawiki:80/api.php
+MEDIAWIKI_USER=WikiBot
+MEDIAWIKI_PASS=your_bot_password
+
+# Ollama設定
+OLLAMA_HOST=http://ollama:11434
+OLLAMA_MODEL=gemma2:9b
+
+# ダッシュボード認証
+ADMIN_USER=admin
+ADMIN_PASS=change_this_password
+
+# 外部API（オプション）
+GOOGLE_SEARCH_API_KEY=your_key_here
+GOOGLE_SEARCH_CX=your_cx_here
+```
+
+## 運用
+
+### ログの確認
+
+```bash
+docker-compose logs -f bot
+```
+
+### メンテナンススクリプト
+
+```bash
+# 定期バックアップ
+./maintenance.sh backup
+
+# ログのローテーション
+./maintenance.sh rotate-logs
+
+# データベースの最適化
+./maintenance.sh optimize-db
+```
+
+### 手動タスク実行
+
+ダッシュボードの "Manual Trigger" から、または:
+
+```bash
+curl -X POST http://localhost:8000/api/tasks \
+  -u admin:your_password \
+  -H "Content-Type: application/json" \
+  -d '{"keyword": "量子コンピュータ"}'
+```
+
+## トラブルシューティング
+
+### Ollamaに接続できない
+
+```bash
+# Ollamaコンテナの状態確認
+docker-compose ps ollama
+
+# ログ確認
+docker-compose logs ollama
+
+# 再起動
+docker-compose restart ollama
+```
+
+### メモリ不足エラー
+
+`docker-compose.yml` でメモリ制限を調整:
+
+```yaml
+services:
+  ollama:
+    deploy:
+      resources:
+        limits:
+          memory: 4G  # 2G→4Gに増加
+```
+
+## 貢献
+
+プルリクエスト歓迎します！以下の手順でお願いします:
+
+1. このリポジトリをフォーク
+2. フィーチャーブランチを作成 (`git checkout -b feature/amazing-feature`)
+3. 変更をコミット (`git commit -m 'Add amazing feature'`)
+4. ブランチをプッシュ (`git push origin feature/amazing-feature`)
+5. プルリクエストを作成
+
+## ライセンス
+
+MIT License - 詳細は [LICENSE](LICENSE) を参照
+
+## 謝辞
+
+- [MediaWiki](https://www.mediawiki.org/) - Wiki エンジン
+- [Ollama](https://ollama.ai/) - ローカルLLMランタイム
+- [FastAPI](https://fastapi.tiangolo.com/) - Web フレームワーク
+
+## 関連リンク
+
+- [詳細ドキュメント](docs/ARCHITECTURE.md)
+- [Issue Tracker](https://github.com/yourusername/auto-wiki-brain/issues)
+- [Discussion Forum](https://github.com/yourusername/auto-wiki-brain/discussions)
+
+---
+
+**Note**: このプロジェクトは実験的なものです。本番環境での使用には十分なテストとセキュリティレビューを行ってください。
