@@ -26,14 +26,14 @@ class CommonsAgent:
             print(f"⚠️ Commons search error: {e}")
         return results
 
-    def select_best_image(self, topic: str, images: list) -> str:
+    def select_best_image(self, topic: str, images: list) -> str | None:
         """検索結果の中から記事に最適な画像をLLMに選ばせる"""
         if not images:
             return None
         
         prompt = f"""
         Wikipedia記事「{topic}」のトップ画像として最も適切なファイルを選んでください。
-        
+    
         候補リスト:
         {chr(10).join(images)}
         
@@ -48,14 +48,22 @@ class CommonsAgent:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1
             )
-            selection = resp.choices[0].message.content.strip()
+        
+            # --- 修正箇所: contentがNoneの場合を考慮 ---
+            content = resp.choices[0].message.content
+            if not content:
+                return None
+            
+            selection = content.strip()
+            # ------------------------------------------
+
             # 簡易的なクリーニング（余計な引用符などを除去）
             selection = selection.replace("'", "").replace('"', "")
-            
+        
             if selection in images:
                 print(f"🖼️ Selected Image: {selection}")
                 return selection
         except Exception as e:
             print(f"⚠️ Image selection error: {e}")
-        
+    
         return None
