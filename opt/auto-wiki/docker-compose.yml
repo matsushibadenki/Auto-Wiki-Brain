@@ -80,6 +80,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - WIKI_LANG=ja
       - ADMIN_USER=${ADMIN_USER}
       - ADMIN_PASS=${ADMIN_PASS}
       - PYTHONPATH=/app
