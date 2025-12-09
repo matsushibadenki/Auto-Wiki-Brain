@@ -13,12 +13,13 @@
         .status-online { background-color: #28a745; }
         .status-offline { background-color: #dc3545; }
         .status-running { background-color: #ffc107; }
+        
         /* Chat Styles */
         .chat-box { height: 300px; overflow-y: auto; background-color: #f1f3f5; border-radius: 5px; padding: 10px; }
-        .chat-msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 15px; max-width: 80%; }
+        .chat-msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 15px; max-width: 80%; word-wrap: break-word; }
         .msg-user { background-color: #007bff; color: white; margin-left: auto; }
         .msg-bot { background-color: #e9ecef; color: black; margin-right: auto; }
-        .source-badge { font-size: 0.7em; opacity: 0.7; display: block; margin-top: 4px; }
+        .source-badge { font-size: 0.75rem; opacity: 0.8; display: block; margin-top: 4px; color: #6c757d; }
     </style>
 </head>
 <body>
@@ -39,6 +40,7 @@
                 <div class="card p-3">
                     <h6 class="text-muted">{{ trans.memory }}</h6>
                     <h3 class="mb-0">[[ status.memory_percent ]]%</h3>
+                    <small>[[ status.memory_used_gb ]]GB / [[ status.memory_total_gb ]]GB</small>
                 </div>
             </div>
             <div class="col-md-3">
@@ -58,6 +60,45 @@
             </div>
         </div>
 
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-heart-pulse"></i> System Health Check</h5>
+                        <button class="btn btn-sm btn-outline-success" @click="runDiagnostics" :disabled="isDiagLoading">
+                            <span v-if="isDiagLoading" class="spinner-border spinner-border-sm"></span>
+                            <span v-else><i class="bi bi-play-circle"></i> Run Diagnostics</span>
+                        </button>
+                    </div>
+                    <div class="card-body" v-if="diagnosticResults.length > 0">
+                        <div class="row">
+                            <div class="col-md-3 mb-2" v-for="(res, index) in diagnosticResults" :key="index">
+                                <div class="p-3 border rounded d-flex align-items-center h-100" 
+                                     :class="{
+                                         'bg-light': res.status === 'OK',
+                                         'bg-warning-subtle': res.status === 'WARN',
+                                         'bg-danger-subtle': res.status === 'FAIL'
+                                     }">
+                                    <div class="me-3 fs-4">
+                                        <i class="bi bi-check-circle-fill text-success" v-if="res.status === 'OK'"></i>
+                                        <i class="bi bi-exclamation-triangle-fill text-warning" v-if="res.status === 'WARN'"></i>
+                                        <i class="bi bi-x-circle-fill text-danger" v-if="res.status === 'FAIL'"></i>
+                                    </div>
+                                    <div>
+                                        <div class="fw-bold">[[ res.name ]]</div>
+                                        <small class="text-muted">[[ res.msg ]]</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body text-center text-muted py-3" v-else>
+                        Click "Run Diagnostics" to check system health.
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row">
             <div class="col-md-7">
                 <div class="card">
@@ -72,6 +113,7 @@
                                     <th>{{ trans.col_topic }}</th>
                                     <th>{{ trans.col_priority }}</th>
                                     <th>{{ trans.col_status }}</th>
+                                    <th>{{ trans.col_next }}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -91,6 +133,10 @@
                                             [[ task.status ]]
                                         </span>
                                     </td>
+                                    <td>[[ task.next_run ]]</td>
+                                </tr>
+                                <tr v-if="tasks.length === 0">
+                                    <td colspan="4" class="text-center text-muted py-3">{{ trans.no_tasks }}</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -99,21 +145,29 @@
             </div>
 
             <div class="col-md-5">
-                <div class="card mb-3">
+                <div class="card">
                     <div class="card-header bg-white">
                         <h5 class="mb-0">{{ trans.manual_task }}</h5>
                     </div>
                     <div class="card-body">
-                        <div class="input-group">
+                        <div class="mb-3">
+                            <label class="form-label">{{ trans.label_topic }}</label>
                             <input type="text" class="form-control" v-model="newTaskTopic" placeholder="{{ trans.placeholder_topic }}" @keyup.enter="addTask">
-                            <button class="btn btn-primary" @click="addTask" :disabled="!newTaskTopic">
-                                <i class="bi bi-plus-lg"></i>
-                            </button>
                         </div>
+                        <div class="mb-3">
+                            <label class="form-label">{{ trans.label_priority }}</label>
+                            <select class="form-select" v-model="newTaskPriority">
+                                <option value="10">{{ trans.prio_high }}</option>
+                                <option value="5">{{ trans.prio_normal }}</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary w-100" @click="addTask" :disabled="!newTaskTopic">
+                            <i class="bi bi-plus-circle"></i> {{ trans.btn_add }}
+                        </button>
                     </div>
                 </div>
 
-                <div class="card">
+                <div class="card mt-3">
                     <div class="card-header bg-white">
                         <h5 class="mb-0"><i class="bi bi-chat-dots"></i> {{ trans.chat_title }}</h5>
                     </div>
@@ -122,7 +176,7 @@
                             <div v-for="(msg, index) in chatHistory" :key="index" class="d-flex w-100">
                                 <div class="chat-msg" :class="msg.role === 'user' ? 'msg-user' : 'msg-bot'">
                                     [[ msg.text ]]
-                                    <span v-if="msg.sources" class="source-badge text-muted">
+                                    <span v-if="msg.sources" class="source-badge">
                                         Ref: [[ msg.sources.join(', ') ]]
                                     </span>
                                 </div>
@@ -140,6 +194,14 @@
                     </div>
                 </div>
 
+                <div class="card mt-3">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0">{{ trans.logs }}</h5>
+                    </div>
+                    <div class="card-body bg-dark text-light font-monospace" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;">
+                        <div v-for="log in logs">[[ log ]]</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -149,35 +211,47 @@
     <script>
         new Vue({
             el: '#app',
-            delimiters: ['[[', ']]'],
+            delimiters: ['[[', ']]'], // Jinja2との競合回避
             data: {
+                // Status & Tasks
                 status: { cpu_percent: 0, memory_percent: 0, ollama_status: 'Checking...' },
                 tasks: [],
+                logs: [],
                 newTaskTopic: '',
+                newTaskPriority: 10,
                 timer: null,
+
                 // Chat Data
                 chatInput: '',
                 chatHistory: [],
-                isChatLoading: false
+                isChatLoading: false,
+
+                // Diagnostics Data
+                isDiagLoading: false,
+                diagnosticResults: []
             },
             mounted() {
                 this.fetchData();
-                this.timer = setInterval(this.fetchData, 5000);
+                this.timer = setInterval(this.fetchData, 5000); // 5秒ごとに更新
             },
             updated() {
                 // Auto scroll chat
                 const container = this.$el.querySelector("#chatContainer");
-                if(container) container.scrollTop = container.scrollHeight;
+                if(container) {
+                    container.scrollTop = container.scrollHeight;
+                }
             },
             methods: {
                 async fetchData() {
                     try {
-                        const [statusRes, tasksRes] = await Promise.all([
+                        const [statusRes, tasksRes, logsRes] = await Promise.all([
                             axios.get('/api/status'),
-                            axios.get('/api/tasks')
+                            axios.get('/api/tasks'),
+                            axios.get('/api/logs')
                         ]);
                         this.status = statusRes.data;
                         this.tasks = tasksRes.data;
+                        this.logs = logsRes.data.logs;
                     } catch (e) {
                         console.error("Connection lost", e);
                     }
@@ -185,10 +259,15 @@
                 async addTask() {
                     if (!this.newTaskTopic) return;
                     try {
-                        await axios.post('/api/tasks', { topic: this.newTaskTopic, priority: 10 });
+                        await axios.post('/api/tasks', {
+                            topic: this.newTaskTopic,
+                            priority: parseInt(this.newTaskPriority)
+                        });
                         this.newTaskTopic = '';
-                        this.fetchData();
-                    } catch (e) { alert("Failed to add task."); }
+                        this.fetchData(); // 即座に更新
+                    } catch (e) {
+                        alert("Failed to add task.");
+                    }
                 },
                 async sendMessage() {
                     if (!this.chatInput) return;
@@ -208,6 +287,19 @@
                         this.chatHistory.push({ role: 'bot', text: "Error: Could not retrieve answer." });
                     } finally {
                         this.isChatLoading = false;
+                    }
+                },
+                async runDiagnostics() {
+                    this.isDiagLoading = true;
+                    this.diagnosticResults = []; // クリア
+                    try {
+                        const res = await axios.get('/api/diagnostics/run');
+                        this.diagnosticResults = res.data.results;
+                    } catch (e) {
+                        alert("Diagnostics failed via API.");
+                        console.error(e);
+                    } finally {
+                        this.isDiagLoading = false;
                     }
                 }
             }
