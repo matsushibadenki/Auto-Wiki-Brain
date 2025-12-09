@@ -1,5 +1,5 @@
 # /opt/auto-wiki/src/bot/wiki_bot.py
-# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.4 - 既存記事の監査・改善機能搭載)
+# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.5 - Wiki構文厳格化 & 構成強化版)
 # 目的: 記事の調査(Deep)・吟味・画像・執筆・レビュー・リンク生成・投稿のワークフロー制御
 
 import os
@@ -204,23 +204,45 @@ class LocalWikiBotV2:
             return f"""
             {base_inst}
             Create a comprehensive Wikipedia article for "{topic}".
+            
+            # CRITICAL FORMATTING RULES
+            1. **Do NOT use Markdown headings** (like # or ##). MediaWiki uses "=" for headings.
+               - Use `== Overview ==` for level 2 headings.
+               - Use `=== History ===` for level 3 headings.
+            2. **Do NOT use Markdown lists** if not necessary. Use standard prose.
+            3. Use `'''bold'''` for the definition term in the first sentence.
+            4. Structure should be: Lead Section -> Overview -> Characteristics -> History/Etymology -> See Also.
+            
             # Rules
             1. Use ONLY provided sources.
             2. Neutral Point of View.
-            3. Output ONLY Wikitext.
+            3. Output ONLY Wikitext code.
+            
             {data_section}
             Output the full article text.
             """
         else:
             return f"""
             {base_inst}
-            トピック「{topic}」のWikipedia記事を新規作成してください。
-            # ルール
-            1. 提供された情報源のみを使用すること。
-            2. 中立的な観点で記述すること。
-            3. 出力はWiki構文のみにすること。
+            トピック「{topic}」について、百科事典としてふさわしい高品質なWikipedia記事を作成してください。
+
+            # 【重要】フォーマットルール (Markdown禁止)
+            1. **見出しにはMarkdownの「#」を使わないでください。** MediaWiki構文の「=」を使ってください。
+               - 正しい例: `== 概要 ==`、`=== 歴史 ===`
+               - 間違い例: `# 概要`、`## 歴史` (これは番号付きリストになってしまいます)
+            2. **定義**: 記事の冒頭は `'''{topic}'''` のように太字で始め、簡潔な定義文を記述してください。
+            3. **構成**: 以下の標準的なセクション構成に従ってください。
+               - 冒頭（定義と要約）
+               - `== 概要 ==`
+               - `== 特徴 ==` (または生態、仕組みなどトピックに応じた詳細)
+               - `== 歴史 ==` (または背景)
+               - `== 関連項目 ==`
+            4. **文体**: 学術的かつ客観的な「だ・である」調を徹底してください。
+
+            # 入力データ
             {data_section}
-            記事全文を出力してください。
+
+            記事の全文をWikitext形式のみで出力してください（挨拶や説明は不要）。
             """
 
     def _build_audit_prompt(self, topic, old_text, info, image_inst):
@@ -238,39 +260,45 @@ class LocalWikiBotV2:
 
         if self.lang == "en":
             return f"""
-            You are a senior Wikipedia editor tasked with auditing and improving an existing article.
-            Topic: "{topic}"
+            You are a senior Wikipedia editor. Audit and improve the existing article "{topic}".
+
+            # Formatting & Quality Rules
+            1. **Fix Headings**: Ensure headings use `== Section ==` syntax, NOT Markdown `#`.
+            2. **Structure**: Ensure standard encyclopedic structure (Lead -> Body -> See Also).
+            3. **Tone**: Enforce objective, academic tone.
 
             # Your Task
-            Compare the "Current Article Content" with the "Trusted Sources".
-            1. **Verify**: Are there any factual errors in the current article? If so, correct them.
-            2. **Update**: Is there new information in the sources that is missing? If so, add it.
-            3. **Structure**: Improve the formatting if needed.
-            4. **Images**: Add the image if instructed and not already present.
+            Compare "Current Content" with "Trusted Sources".
+            1. **Verify**: Correct factual errors.
+            2. **Update**: Add missing info from sources.
+            3. **Structure**: Fix formatting issues (especially the `#` vs `==` headers).
+            4. **Images**: Add image if missing.
 
-            # Output Rules
-            - If the article is already perfect and accurate, output ONLY "NO_CHANGE".
-            - If changes are needed, output the **Full Rewritten Article** in Wikitext.
-            - Do NOT explain your changes, just output the code.
+            # Output
+            - If perfect: "NO_CHANGE"
+            - If needs fix: Output **Full Rewritten Article** in Wikitext.
             
             {data_section}
             """
         else:
             return f"""
-            あなたはWikipediaのシニア編集者です。既存の記事を監査し、改善する任務があります。
-            トピック: 「{topic}」
+            あなたはWikipediaのシニア編集者です。既存の記事「{topic}」を監査し、百科事典として恥ずかしくない品質にリライトしてください。
+
+            # 【最重要】フォーマット修正
+            - **見出しが Markdown (`#`) になっていたら、必ず MediaWiki構文 (`==`) に直してください。**
+              - `# 概要` → `== 概要 ==`
+              - `## 歴史` → `=== 歴史 ===`
+            - 箇条書きの乱用を避け、なるべく自然な文章（プロース）で記述してください。
 
             # あなたの仕事
-            「現在の記事内容」と「信頼できる情報源（最新情報）」を比較してください。
-            1. **検証**: 記事に誤った情報はありませんか？あれば訂正してください。
-            2. **加筆**: 情報源にある重要な情報で、記事に欠けているものはありますか？あれば適切なセクションに追記してください。
-            3. **構造**: フォーマットや見出しを整理してください。
-            4. **画像**: 画像指示があり、記事にまだ画像がない場合は追加してください。
+            「現在の記事」と「信頼できる情報源」を比較し、以下を行ってください。
+            1. **構造改善**: 辞書として読みやすい構成（定義→概要→詳細）に直す。
+            2. **加筆・修正**: 情報源に基づき、不足情報の追加や誤りの訂正を行う。
+            3. **画像追加**: 画像指示があり、記事に画像がない場合は追加する。
 
             # 出力ルール
-            - 記事が既に正確で十分な場合、"NO_CHANGE" とだけ出力してください。
-            - 修正が必要な場合、**修正後の記事全文**をWiki構文で出力してください。
-            - 修正箇所の説明は不要です。コードのみを出力してください。
+            - 修正が不要な場合: "NO_CHANGE"
+            - 修正が必要な場合: **修正後の記事全文**をWiki構文で出力。
 
             {data_section}
             """
