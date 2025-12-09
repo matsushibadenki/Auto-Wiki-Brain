@@ -53,6 +53,7 @@ services:
       - ./data/chromadb_ja:/app/wiki_vector_db
       - ./data/scheduler_ja.db:/app/scheduler.db
       - ./config:/app/config
+      - ./data/inputs:/app/data/inputs  # [追加] ローカル取込用フォルダ
     environment:
       - WIKI_LANG=ja
       - WIKI_HOST=mediawiki-ja:80
@@ -68,7 +69,7 @@ services:
       - ollama
     networks:
       - wiki-net
-
+      
   dashboard-ja:
     build: 
       context: .
