@@ -1,5 +1,5 @@
 # /opt/auto-wiki/src/scheduler/task_manager.py
-# タスク管理マネージャー (v2.7 - 自動メンテナンス機能追加)
+# タスク管理マネージャー (v2.8 - タスク削除機能追加)
 # 目的: タスクのキューイング、トレンド情報の取得、DB操作を行う
 
 import sqlite3
@@ -47,17 +47,11 @@ class WikiScheduler:
         conn.close()
 
     def schedule_maintenance_tasks(self, interval_days=7):
-        """
-        アイドル時に実行: 古い記事を再チェックリストに追加する
-        最終更新から interval_days 以上経過した記事を PENDING に戻す
-        """
+        """アイドル時に実行: 古い記事を再チェックリストに追加する"""
         conn = self._get_conn()
         cursor = conn.cursor()
         
-        # 最終実行が古く、かつ現在実行中でないタスクを探す
         threshold = datetime.now() - timedelta(days=interval_days)
-        
-        # next_run が NULL (完了済み) のもので、last_run が古いものを対象にする
         cursor.execute('''
             SELECT id, topic FROM tasks 
             WHERE status = 'FINISHED' 
@@ -70,21 +64,17 @@ class WikiScheduler:
         if row:
             task_id, topic = row
             print(f"♻️  Scheduling maintenance for old article: {topic}")
-            
-            # 低優先度(priority=3)で再スケジュール
-            # next_run を現在時刻にして即時実行候補にする
             cursor.execute('''
                 UPDATE tasks 
                 SET status = 'PENDING', priority = 3, next_run = ? 
                 WHERE id = ?
             ''', (datetime.now(), task_id))
-            
             conn.commit()
             conn.close()
-            return True # タスクを追加した
+            return True
             
         conn.close()
-        return False # 追加するものはなかった
+        return False
 
     def fetch_external_trends(self):
         """Google Trends (RSS) から急上昇ワードを取得してタスクに追加"""
@@ -96,7 +86,6 @@ class WikiScheduler:
             count = 0
             for entry in feed.entries:
                 topic = entry.title
-                # 新規トレンドは高優先度(8)で追加
                 if self.add_or_update_task(topic, priority=8):
                     count += 1
             print(f"🌍 Added {count} new trending topics.")
@@ -104,20 +93,14 @@ class WikiScheduler:
             print(f"⚠️ Failed to fetch trends: {e}")
 
     def add_or_update_task(self, topic: str, priority: int = 5, volatility_days: int = 1):
-        """
-        タスクを追加または更新する
-        Return: True if new task added, False if existed
-        """
+        """タスクを追加または更新する"""
         conn = self._get_conn()
         cursor = conn.cursor()
         
-        # 既存チェック
         cursor.execute("SELECT id, status FROM tasks WHERE topic = ?", (topic,))
         row = cursor.fetchone()
         
         if row:
-            # 既存タスクがある場合、もしFINISHEDならPENDINGに戻して再実行させる
-            # これにより「一度終わったけどもう一回やりたい」という再登録に対応
             if row[1] == 'FINISHED':
                 next_run = datetime.now()
                 cursor.execute('''
@@ -127,13 +110,12 @@ class WikiScheduler:
                 ''', (priority, next_run, row[0]))
                 conn.commit()
                 conn.close()
-                return True # 更新されたのでTrue扱い
+                return True
             
             conn.commit()
             conn.close()
             return False
         else:
-            # 新規追加
             next_run = datetime.now()
             cursor.execute('''
                 INSERT INTO tasks (topic, priority, status, next_run)
@@ -143,6 +125,15 @@ class WikiScheduler:
             conn.close()
             return True
 
+    # --- 追加: タスク削除メソッド ---
+    def delete_task(self, task_id: int):
+        """指定されたIDのタスクを削除する"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+        conn.close()
+
     def get_next_task(self):
         """実行すべきタスクを一つ取得し、RUNNING状態にする"""
         conn = self._get_conn()
@@ -150,7 +141,7 @@ class WikiScheduler:
         
         now = datetime.now()
 
-        # --- ゾンビタスクの救出 ---
+        # ゾンビタスクの救出 (30分タイムアウト)
         timeout_threshold = now - timedelta(minutes=30)
         cursor.execute('''
             UPDATE tasks 
@@ -161,7 +152,6 @@ class WikiScheduler:
             print(f"🚑 Recovered {cursor.rowcount} timed-out tasks.")
             conn.commit()
         
-        # 優先度順、かつ実行時刻が到来しているもの
         cursor.execute('''
             SELECT id, topic FROM tasks 
             WHERE status = 'PENDING' AND next_run <= ?
@@ -172,7 +162,6 @@ class WikiScheduler:
         row = cursor.fetchone()
         if row:
             task_id, topic = row
-            # RUNNINGにする際、last_runに現在時刻（開始時刻）を入れる
             cursor.execute("UPDATE tasks SET status = 'RUNNING', last_run = ? WHERE id = ?", (now, task_id))
             conn.commit()
             conn.close()
@@ -185,8 +174,6 @@ class WikiScheduler:
         """タスクを完了状態にする"""
         conn = self._get_conn()
         cursor = conn.cursor()
-        # 完了時は next_run をNULLにして、次回実行対象から外す
-        # last_run は完了時刻で上書きされる
         cursor.execute('''
             UPDATE tasks 
             SET status = 'FINISHED', last_run = ?, next_run = NULL 
@@ -203,7 +190,7 @@ class WikiScheduler:
         cursor = conn.cursor()
         # 実行中、保留中、完了の順に取得
         cursor.execute('''
-            SELECT topic, priority, status, next_run 
+            SELECT id, topic, priority, status, next_run 
             FROM tasks
             ORDER BY 
                 CASE status
@@ -218,10 +205,11 @@ class WikiScheduler:
         tasks = []
         for row in cursor.fetchall():
             tasks.append({
-                "topic": row[0],
-                "priority": row[1],
-                "status": row[2],
-                "next_run": row[3] if row[3] else "Now"
+                "id": row[0],      # IDを追加
+                "topic": row[1],
+                "priority": row[2],
+                "status": row[3],
+                "next_run": row[4] if row[4] else "Now"
             })
         conn.close()
         return tasks
