@@ -1,9 +1,10 @@
 # /opt/auto-wiki/src/bot/wiki_bot.py
-# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.5 - Wiki構文厳格化 & 構成強化版)
+# 日本語タイトル: 自律型Wiki Botのメインロジック (v2.6 - 差分更新・追記型アプローチ)
 # 目的: 記事の調査(Deep)・吟味・画像・執筆・レビュー・リンク生成・投稿のワークフロー制御
 
 import os
 import mwclient
+import datetime
 from openai import OpenAI
 from src.bot.commons import CommonsAgent
 from src.bot.vetter import InformationVetter
@@ -47,7 +48,7 @@ class LocalWikiBotV2:
         is_existing = False
         
         if page.exists:
-            print(f"   ℹ️ Article '{topic}' already exists. Checking for improvements...")
+            print(f"   ℹ️ Article '{topic}' already exists. Checking for updates...")
             old_text = page.text()
             is_existing = True
         else:
@@ -87,9 +88,9 @@ class LocalWikiBotV2:
         # --- Phase 4: Writing / Auditing (執筆・監査) ---
         
         if is_existing:
-            # 既存記事の監査・修正モード
-            prompt = self._build_audit_prompt(topic, old_text, vetted_info, image_instruction)
-            action_type = "Auditing & Updating"
+            # 既存記事の「追記・更新」モード（全体書き換え防止）
+            prompt = self._build_incremental_update_prompt(topic, old_text, vetted_info, image_instruction)
+            action_type = "Updating (Incremental)"
         else:
             # 新規作成モード
             prompt = self._build_creation_prompt(topic, old_text, vetted_info, image_instruction)
@@ -109,6 +110,7 @@ class LocalWikiBotV2:
             return
 
         # --- Phase 4.5: Review & Refine (レビューと修正) ---
+        # 既存記事の追記の場合はレビュー基準を少し緩める（構成崩れのリスクが減るため）
         if "NO_CHANGE" not in draft_text:
             # ドラフトが空でないか確認
             if not draft_text or len(draft_text) < 50:
@@ -120,31 +122,36 @@ class LocalWikiBotV2:
                 draft_text = self.reviewer.refine_draft(topic, draft_text, feedback)
 
         # --- Phase 4.6: Internal Linking (内部リンク生成) ---
-        if "NO_CHANGE" not in draft_text:
-            try:
-                # 既存記事の場合は、既にリンクがあるかもしれないので慎重に追加
+        # 追記の場合もリンクは有用だが、既存テキスト内のリンクは触らない
+        if "NO_CHANGE" not in draft_text and not is_existing:
+             try:
                 if "== 関連項目 ==" not in draft_text and "== See Also ==" not in draft_text:
                     see_also = self._generate_see_also(topic)
                     if see_also:
                         draft_text += f"\n\n{see_also}"
-            except Exception as e:
+             except Exception as e:
                 print(f"⚠️ Internal linking failed: {e}")
 
         # --- Phase 5: Publishing (投稿) ---
-        if "NO_CHANGE" not in draft_text and len(draft_text) > 50:
-            # 変更がある場合のみ保存
+        if "NO_CHANGE" not in draft_text and len(draft_text) > 10:
             summary = ""
+            final_text = ""
+
             if is_existing:
-                summary = "Auto-update: Verified facts, added missing info, and corrected errors."
+                # 追記モードの場合、生成されたテキストは「追記分のみ」あるいは「修正版全文」
+                # ここでは安全のため、プロンプトで「追記分のみ出力」させるか、「全文出力」させるかで制御が必要。
+                # _build_incremental_update_prompt では「全文」を出力させるようにしているが、
+                # 既存部分を勝手に変えないよう強く指示している。
+                summary = "Auto-update: Added new information based on latest research."
+                final_text = draft_text.replace("```wikitext", "").replace("```", "")
+                
+                # 既存記事と全く同じなら保存しない
+                if final_text.strip() == old_text.strip():
+                    print("⏹️  Content is identical. No update needed.")
+                    return
             else:
                 summary = "Created new article via Auto-Wiki-Brain."
-                
-            final_text = draft_text.replace("```wikitext", "").replace("```", "")
-            
-            # 既存記事と全く同じなら保存しない（API負荷軽減）
-            if is_existing and final_text.strip() == old_text.strip():
-                print("⏹️  Content is identical. No update needed.")
-                return
+                final_text = draft_text.replace("```wikitext", "").replace("```", "")
 
             page.save(final_text, summary=summary)
             print("✅ Article saved successfully.")
@@ -152,7 +159,7 @@ class LocalWikiBotV2:
             # ベクトルDBも更新
             self.vector_db.upsert_article(topic, final_text)
         else:
-            print("⏹️  No significant changes generated (Bot decided to keep current version).")
+            print("⏹️  No significant changes generated.")
 
     def _generate_see_also(self, topic: str) -> str:
         """関連する既存記事へのリンク集を生成する"""
@@ -245,60 +252,56 @@ class LocalWikiBotV2:
             記事の全文をWikitext形式のみで出力してください（挨拶や説明は不要）。
             """
 
-    def _build_audit_prompt(self, topic, old_text, info, image_inst):
-        """既存記事の監査・修正用プロンプト"""
+    def _build_incremental_update_prompt(self, topic, old_text, info, image_inst):
+        """既存記事の追記・更新用プロンプト（差分更新重視）"""
         data_section = f"""
         # Target Topic
         {topic}
         # Trusted Sources (Latest Info)
         {info}
-        # Current Article Content
+        # Current Article Content (DO NOT CHANGE EXISTING PARTS)
         {old_text}
         # Image Instructions
         {image_inst}
         """
+        
+        current_date = datetime.date.today().strftime("%Y年%m月")
 
         if self.lang == "en":
             return f"""
-            You are a senior Wikipedia editor. Audit and improve the existing article "{topic}".
+            You are a Wikipedia editor. You need to update the existing article "{topic}" with new information.
 
-            # Formatting & Quality Rules
-            1. **Fix Headings**: Ensure headings use `== Section ==` syntax, NOT Markdown `#`.
-            2. **Structure**: Ensure standard encyclopedic structure (Lead -> Body -> See Also).
-            3. **Tone**: Enforce objective, academic tone.
-
-            # Your Task
-            Compare "Current Content" with "Trusted Sources".
-            1. **Verify**: Correct factual errors.
-            2. **Update**: Add missing info from sources.
-            3. **Structure**: Fix formatting issues (especially the `#` vs `==` headers).
-            4. **Images**: Add image if missing.
+            # IMPORTANT: Incremental Update Rule
+            - **Do NOT rewrite the entire article.** Keep the existing structure and text as much as possible.
+            - **Only ADD new information** found in "Trusted Sources" that is missing from the "Current Article Content".
+            - **Format**:
+              - If the new info fits into an existing section, append it to that section.
+              - Or, create a new section like `== Recent Developments ({current_date}) ==` at the end (before See Also).
+            - **Correction**: Only correct obvious factual errors. Do not change style or phrasing of existing text.
+            - **Headings**: Use `== Section ==` (MediaWiki syntax). Do NOT use Markdown `#`.
 
             # Output
-            - If perfect: "NO_CHANGE"
-            - If needs fix: Output **Full Rewritten Article** in Wikitext.
+            - If no meaningful new info is found: "NO_CHANGE"
+            - Otherwise: Output the **Full Article (Old Text + New Additions)** in Wikitext.
             
             {data_section}
             """
         else:
             return f"""
-            あなたはWikipediaのシニア編集者です。既存の記事「{topic}」を監査し、百科事典として恥ずかしくない品質にリライトしてください。
+            あなたはWikipediaの編集者です。既存の記事「{topic}」に最新情報を追記してください。
 
-            # 【最重要】フォーマット修正
-            - **見出しが Markdown (`#`) になっていたら、必ず MediaWiki構文 (`==`) に直してください。**
-              - `# 概要` → `== 概要 ==`
-              - `## 歴史` → `=== 歴史 ===`
-            - 箇条書きの乱用を避け、なるべく自然な文章（プロース）で記述してください。
+            # 【最重要】差分更新ルール
+            1. **既存の記事を書き換えないでください。** 元の文章や構成は極力維持してください。
+            2. **「追記」を優先してください。** 「信頼できる情報源」にあって「現在の記事」にない情報のみを追加してください。
+            3. **追記場所**:
+               - 既存の適切なセクションの末尾に追記する。
+               - または、記事の最後に `== 最新の動向 ({current_date}) ==` というセクションを作って追記する。
+            4. **修正**: 明らかな事実誤認がある場合のみ修正してください。文体の好みでの書き換えは禁止です。
+            5. **フォーマット**: 見出しは必ず `== 見出し ==` を使用してください（Markdown禁止）。
 
-            # あなたの仕事
-            「現在の記事」と「信頼できる情報源」を比較し、以下を行ってください。
-            1. **構造改善**: 辞書として読みやすい構成（定義→概要→詳細）に直す。
-            2. **加筆・修正**: 情報源に基づき、不足情報の追加や誤りの訂正を行う。
-            3. **画像追加**: 画像指示があり、記事に画像がない場合は追加する。
-
-            # 出力ルール
-            - 修正が不要な場合: "NO_CHANGE"
-            - 修正が必要な場合: **修正後の記事全文**をWiki構文で出力。
+            # 出力
+            - 新しい情報がない場合: "NO_CHANGE"
+            - 更新する場合: **全文（元のテキスト + 追記分）** をWikitext形式で出力してください。
 
             {data_section}
             """
