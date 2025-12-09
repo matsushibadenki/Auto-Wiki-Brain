@@ -11,7 +11,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 import secrets
 import sys
-from openai import OpenAI  # 追加
+from openai import OpenAI
+from src.utils.diagnostics import SystemDiagnostics
 
 sys.path.append("/app")
 from src.scheduler.task_manager import WikiScheduler
@@ -34,6 +35,10 @@ vector_db = WikiVectorDB()
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemma2")
 llm_client = OpenAI(base_url=OLLAMA_HOST, api_key="ollama")
+
+
+# 診断クラスのインスタンス化
+diagnostics = SystemDiagnostics()
 
 # --- 言語設定と翻訳辞書 ---
 SYSTEM_LANG = os.getenv("WIKI_LANG", "ja")
@@ -240,3 +245,11 @@ def chat_with_brain(req: ChatRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+        
+        
+# --- Diagnostics Endpoints ---
+@app.get("/api/diagnostics/run")
+def run_system_diagnostics(username: str = Depends(get_current_username)):
+    """システム診断を実行して結果を返す"""
+    results = diagnostics.run_all_checks()
+    return {"results": results}
