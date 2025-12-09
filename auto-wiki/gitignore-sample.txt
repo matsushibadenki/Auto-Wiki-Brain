@@ -1,0 +1,26 @@
+# Docker volumes & data
+data/
+*.db
+*.sqlite
+
+# Environment variables (Secrets)
+.env
+env.txt
+Dockerfile.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Helper scripts logs/temp
+swapfile
