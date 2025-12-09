@@ -288,6 +288,12 @@
                     }
                 },
                 
+                // [Fix] Added missing method
+                async fetchTasks() {
+                    this.logInfo("Refreshing task queue...");
+                    await this.fetchData();
+                },
+                
                 async addTask() {
                     if (!this.newTaskTopic) return;
                     this.logInfo(`Adding task: ${this.newTaskTopic}...`);
@@ -349,11 +355,3 @@
     </script>
 </body>
 </html>
-```
-
-### 反映手順
-
-1.  上記のコードで `opt/auto-wiki/src/templates/dashboard.html` を上書き保存します。
-2.  ダッシュボードコンテナを再起動します。
-    ```bash
-    docker compose restart dashboard-ja
