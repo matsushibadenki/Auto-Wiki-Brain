@@ -59,35 +59,31 @@ Botが記事を執筆する際の「文体」や「構成ルール」を指定�
 
 ### **Step 3: 権限の設定**
 
-各種スクリプトに実行権限を付与します。
+各種スクリプトに実行権限を付与します。統合管理ツール manager.sh を使用するため、これに権限を与えておけば十分ですが、念のため全てに付与します。
 
-chmod \+x setup.sh maintenance/\*.sh
+chmod \+x \*.sh  
+chmod \+x maintenance/\*.sh  
+chmod \+x maintenance/toolbox/\*.sh
 
 ### **Step 4: システムの構築と起動**
 
-自動セットアップスクリプトを実行します。
+まずは自動セットアップスクリプトを実行して、コンテナのビルドと初期設定を行います。
 
 ./setup.sh
 
-Linux環境（VPSなど）の場合:  
-メモリ不足を防ぐため、事前にスワップ領域作成スクリプトを実行することを推奨します。  
-sudo ./maintenance.sh
+【推奨】Linux環境（VPSなど）の場合:  
+メモリ不足を防ぐため、統合管理ツールを使ってスワップ領域を作成することを強く推奨します。  
+./manager.sh  
+\# メニューから "3. Setup Swap Memory" を選択
 
 ### **Step 5: Wikipedia初期データのインポート（オプション）**
 
 Wikiを最初から知識で満たしたい場合、Wikipediaの日本語ダンプデータをインポートできます。  
-この作業には数時間かかり、数十GBのディスク容量を消費するため、必須ではありません。Botがゼロから学習していく様子を楽しみたい場合はスキップしてください。  
-実行方法:  
-システムが起動している状態で、以下のスクリプトを実行します。  
-./maintenance/import\_dump.sh
+この作業には数時間かかり、数十GBのディスク容量を消費するため、必須ではありません。  
+実行方法:
 
-このスクリプトは以下の処理を自動で行います：
-
-1. 最新のWikipediaダンプファイル（XML）をダウンロード  
-2. MediaWikiデータベースへインポート  
-3. 統計情報の更新
-
-※ **注意**: 実行中はサーバーの負荷が高まります。
+./manager.sh  
+\# メニューから "10. Import Wikipedia Dump" を選択
 
 ## **3\. 動作確認 (Verification)**
 
@@ -108,51 +104,72 @@ Wikiを最初から知識で満たしたい場合、Wikipediaの日本語ダン�
 **ダッシュボードの新機能:**
 
 * **System Health Check**: 「Run Diagnostics」ボタンを押すと、AIやデータベースへの接続状況を診断できます。  
-* **Chat with Wiki Brain**: 右下のチャットボックスから、蓄積された知識についてBotに質問できます。
+* **System Logs**: Botのリアルタイムな思考プロセス（検索・執筆状況）を確認できます。
 
 ## **4\. 運用・メンテナンス (Operations)**
 
-### **基本操作**
+本システムは、**統合管理ツール manager.sh** を使用して一元管理できます。
 
-* **システムの起動** (サーバー再起動後や停止状態から):  
+### **統合管理ツールの使い方**
+
+プロジェクトルートで以下のコマンドを実行します。
+
+./manager.sh
+
+表示されるメニューから番号を選んで実行します。
+
+#### **\[ Configuration & Features \]**
+
+1. **Enable Progress Logs (ログ機能有効化)**  
+   * ダッシュボードに詳細なBotの活動ログを表示するようにします。  
+2. **Create Bot User (Botユーザー作成)**  
+   * MediaWiki上にBot用のアカウントを再作成します。「Login Failed」エラーが出る場合に有効です。  
+3. **Setup Swap Memory (スワップ領域作成)**  
+   * Linux環境でのメモリ不足（OOM Kill）を防ぐため、8GBのスワップファイルを作成します。
+
+#### **\[ Troubleshooting & Fixes \]**
+
+4. **Fix Internal Network (内部ネットワーク修復)**  
+   * Botが「接続拒否」される場合や、Wikiがリダイレクトループする場合に使用します。Bot用と人間用のアクセスURLを自動で振り分ける設定を適用します。  
+5. **Fix Server Port 8080 (ポート設定修正)**  
+   * WikiのURL設定 ($wgServer) を localhost:8080 に明示的に設定します。  
+6. **Fix Diagnostics Bug (診断機能修正)**  
+   * ダッシュボードの診断機能でエラーが出る場合、プログラムのバグを修正します。  
+7. **Repair Wiki Settings (設定ファイル修復)**  
+   * LocalSettings.php が破損したり空になった場合に、設定ファイルを再生成します。  
+8. **Force Re-install MediaWiki (強制再インストール)**  
+   * Dockerのマウント問題でインストールが失敗する場合、一時コンテナを使用して強制的にインストールを実行します。
+
+#### **\[ System Maintenance \]**
+
+9. **Factory Reset (初期化・データ削除)**  
+   * **注意**: 全ての記事、画像、データベースを削除し、インストール直後の状態に戻します（確認プロンプトあり）。  
+10. **Import Wikipedia Dump (ダンプインポート)**  
+    * WikipediaのXMLダンプデータをダウンロードしてインポートします。  
+11. **Backup/Migrate (バックアップ・移行)**  
+    * 現在のデータ一式を圧縮してバックアップファイルを作成、またはバックアップからの復元を行います。
+
+### **基本操作 (Docker Compose)**
+
+日々の起動・停止は通常のDockerコマンドを使用します。
+
+* **システムの起動**:  
   docker compose up \-d
 
-  ※ setup.sh は初回構築用です。日々の起動には docker compose を使用してください。  
 * **システムの停止**:  
   docker compose down
 
-* **システムの再起動** (設定反映時など):  
-  docker compose restart
+* **ログの確認 (Botのみ)**:  
+  docker compose logs \-f wiki-bot-ja
 
-* **ログの確認**:  
-  \# Botの動作ログ（執筆・思考プロセス）  
-  docker compose logs \-f wiki-bot
+### **サーバーの移転・バックアップ (Migration)**
 
-  \# 全体のログ  
-  docker compose logs \-f
+サーバー移転や完全バックアップには、manager.sh のメニュー **"11. Backup/Migrate"** を使用します。
 
-### **サーバーの移転・完全バックアップ (Migration)**
-
-サーバーを移転する場合や、完全なバックアップを取得する場合は、付属の migrate.sh ツールを使用します。これにより、データベース、画像、AIモデル、設定ファイルの全てを1つのファイルにまとめられます。
-
-#### **A. 旧サーバーでの作業 (Export)**
-
-\# バックアップファイルの作成  
-sudo ./maintenance/migrate.sh export my\_wiki\_backup.tar.gz
-
-実行するとDockerが一時停止し、my\_wiki\_backup.tar.gz が生成されます。このファイルを新サーバーへ転送してください。
-
-#### **B. 新サーバーでの作業 (Import)**
-
-新サーバーにファイルを配置し、以下の手順で復元します。
-
-\# 1\. アーカイブの展開  
-tar \-xzvf my\_wiki\_backup.tar.gz
-
-\# 2\. リストアとシステムの起動  
-sudo ./maintenance/migrate.sh import my\_wiki\_backup.tar.gz
-
-これで旧サーバーの状態がそのまま復元され、Wikiが再開します。
+1. 旧サーバー (Export):  
+   メニューから "11" を選び、export を選択します。auto-wiki-migration.tar.gz が生成されます。  
+2. 新サーバー (Import):  
+   ファイルを配置し、メニューから "11" を選び、import を選択します。環境が復元されます。
 
 ### **ローカル知識の追加 (Importing Local Documents)**
 
@@ -169,20 +186,43 @@ sudo ./maintenance/migrate.sh import my\_wiki\_backup.tar.gz
 
 ## **5\. トラブルシューティング (FAQ)**
 
+**Q. ダッシュボードで "Login Failed" が出る**
+
+* ./manager.sh を実行し、**"2. Create Bot User"** を実行してください。
+
+**Q. Wiki (8080) にアクセスすると localhost (80) に飛ばされる / 接続できない**
+
+* ./manager.sh を実行し、**"5. Fix Server Port 8080"** を実行してください。それでも直らない場合は **"4. Fix Internal Network"** を試してください。
+
+**Q. 記事作成タスクが "PENDING" から進まない**
+
+* BotがWikiに接続できていない可能性があります。./manager.sh から **"4. Fix Internal Network"** を実行し、Botとブラウザの両方がアクセスできる設定に修正してください。
+
 **Q. セットアップ中に "MariaDB timed out" エラーが出る**
 
 * スペックの低いマシンではDBの起動に時間がかかることがあります。setup.sh をもう一度実行してみてください。
 
-**Q. "404 Not Found" でWikiが表示されない**
-
-* data/mediawiki\_html/ ディレクトリが空になっていないか確認してください。もし空の場合は、一度コンテナを削除 (docker compose down \-v) してから再度 setup.sh を実行してください。
-
-**Q. 記事が生成されない**
-
-* Botのログを確認してください (docker compose logs wiki-bot)。  
-* Ollamaコンテナがモデルをロード中の場合、最初の生成まで数分かかることがあります。
-
 **Q. システム診断で "FAIL" が出る**
 
 * **Ollama**: コンテナが起動しているか (docker compose ps) 確認してください。  
-* **Internet**: サーバーのDNS設定やファイアウォールを確認してください。
+* **MediaWiki API**: ./manager.sh の **"6. Fix Diagnostics Bug"** を試してみてください。古いバージョンのバグである可能性があります。
+
+## **6\. ディレクトリ構成**
+
+auto-wiki-brain/  
+├── manager.sh           \# 【メイン】統合管理ツール  
+├── setup.sh             \# 初回構築スクリプト  
+├── docker-compose.yml  
+├── .env  
+├── src/                 \# ソースコード  
+├── data/                \# 永続化データ (DB, 画像, ベクトル)  
+├── config/              \# 編集方針ファイル  
+└── maintenance/         \# メンテナンス用スクリプト群  
+    ├── toolbox/         \# (修復・設定変更用スクリプト)  
+    │   ├── fix\_\*.sh  
+    │   ├── repair\_\*.sh  
+    │   └── ...  
+    ├── setup\_swap.sh  
+    ├── factory\_reset.sh  
+    ├── import\_dump.sh  
+    └── migrate.sh  
