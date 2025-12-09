@@ -52,7 +52,7 @@ services:
       - ./src:/app/src
       - ./data/chromadb_ja:/app/wiki_vector_db
       - ./data/scheduler_ja.db:/app/scheduler.db
-      - ./data/prompts:/app/data/prompts
+      - ./config:/app/config
     environment:
       - WIKI_LANG=ja
       - WIKI_HOST=mediawiki-ja:80
@@ -116,6 +116,7 @@ services:
       - ./src:/app/src
       - ./data/chromadb_en:/app/wiki_vector_db
       - ./data/scheduler_en.db:/app/scheduler.db
+      - ./config:/app/config
     environment:
       - WIKI_LANG=en
       - WIKI_HOST=mediawiki-en:80
