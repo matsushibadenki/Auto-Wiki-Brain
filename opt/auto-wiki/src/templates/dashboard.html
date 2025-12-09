@@ -8,8 +8,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
         body { background-color: #f8f9fa; }
-        /* カードに h-100 を適用するので、ここの margin-bottom は削除し、親の row や col で調整するか、ユーティリティクラスを使う方がベターですが、現状維持で影響を最小限にします */
-        .card { box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; margin-bottom: 20px; }
+        .card { box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; }
         .status-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .status-online { background-color: #28a745; }
         .status-offline { background-color: #dc3545; }
@@ -34,15 +33,15 @@
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1 class="h3"><i class="bi bi-robot"></i> {{ trans.title }}</h1>
             <div>
-            <a href="http://localhost:8080" target="_blank" class="btn btn-outline-dark me-2">
-            <i class="bi bi-book"></i> Open Wiki
-            </a>
-            <span class="badge bg-secondary">User: {{ username }}</span>
+                <!-- Wiki Link Button -->
+                <a href="http://localhost:8080" target="_blank" class="btn btn-outline-dark me-2">
+                    <i class="bi bi-book"></i> Open Wiki
+                </a>
+                <span class="badge bg-secondary">User: {{ username }}</span>
             </div>
         </div>
 
         <!-- System Status Cards -->
-        <!-- row に align-items-stretch を追加（Bootstrapのデフォルトでflexなので通常は不要ですが念のため） -->
         <div class="row mb-4">
             <div class="col-md-3 d-flex">
                 <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
@@ -127,6 +126,7 @@
                                     <th>{{ trans.col_priority }}</th>
                                     <th>{{ trans.col_status }}</th>
                                     <th>{{ trans.col_next }}</th>
+                                    <th>{{ trans.col_action }}</th> <!-- Action列追加 -->
                                 </tr>
                             </thead>
                             <tbody>
@@ -147,9 +147,15 @@
                                         </span>
                                     </td>
                                     <td>[[ task.next_run ]]</td>
+                                    <!-- 削除ボタン追加 (type="button" を明示し、debugログを追加) -->
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" @click.stop="deleteTask(task.id)">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </td>
                                 </tr>
                                 <tr v-if="tasks.length === 0">
-                                    <td colspan="4" class="text-center text-muted py-3">{{ trans.no_tasks }}</td>
+                                    <td colspan="5" class="text-center text-muted py-3">{{ trans.no_tasks }}</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -291,15 +297,8 @@
                         this.status = statusRes.data;
                         this.tasks = tasksRes.data;
                         
-                        // サーバーサイドからのログをマージ
-                        if(logsRes.data.logs && logsRes.data.logs.length > 0) {
-                            // 最新のログのみを表示するなど、必要に応じて調整
-                            // ここではシンプルにコンソールに出すか、debugLogsには追加しない（重複するため）
-                            // または専用のビューエリアを作るのが良いが、今回は簡易的に統合
-                        }
+                        // サーバーサイドからのログをマージ（必要なら）
                     } catch (e) {
-                        // Polling errors are noisy, only log if connection is truly lost
-                        // console.error("Connection lost", e);
                     }
                 },
                 
@@ -322,6 +321,31 @@
                         this.fetchData(); 
                     } catch (e) {
                         this.logError("Failed to add task", e);
+                    }
+                },
+
+                // --- 追加: タスク削除メソッド (デバッグ強化版) ---
+                async deleteTask(taskId) {
+                    console.log("Delete button clicked. Task ID:", taskId);
+                    
+                    // IDが取得できていない場合のアラート
+                    if (taskId === undefined || taskId === null) {
+                        alert("Error: Task ID is undefined. Please refresh the page (Shift+F5). If this persists, the API might not be returning IDs.");
+                        return;
+                    }
+
+                    if (!confirm(`Are you sure you want to delete Task ID: ${taskId}?`)) return;
+                    
+                    this.logInfo(`Deleting task ID: ${taskId}...`);
+                    try {
+                        const res = await axios.delete(`/api/tasks/${taskId}`);
+                        console.log("API Response:", res);
+                        this.logInfo("Task deleted successfully.");
+                        await this.fetchData(); // リスト更新
+                    } catch (e) {
+                        console.error(e);
+                        this.logError("Failed to delete task. (Check Console)", e);
+                        alert("Delete failed. See console for error details.");
                     }
                 },
                 
