@@ -20,15 +20,22 @@
         .msg-user { background-color: #007bff; color: white; margin-left: auto; }
         .msg-bot { background-color: #e9ecef; color: black; margin-right: auto; }
         .source-badge { font-size: 0.75rem; opacity: 0.8; display: block; margin-top: 4px; color: #6c757d; }
+        
+        /* Debug Log Styles */
+        .log-entry { font-family: monospace; font-size: 0.8rem; border-bottom: 1px solid #444; padding: 2px 0; }
+        .log-error { color: #ff6b6b; }
+        .log-info { color: #4ecdc4; }
     </style>
 </head>
 <body>
     <div id="app" class="container py-4">
+        <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1 class="h3"><i class="bi bi-robot"></i> {{ trans.title }}</h1>
             <span class="badge bg-secondary">User: {{ username }}</span>
         </div>
 
+        <!-- System Status Cards -->
         <div class="row mb-4">
             <div class="col-md-3">
                 <div class="card p-3">
@@ -60,6 +67,7 @@
             </div>
         </div>
 
+        <!-- System Health & Diagnostics -->
         <div class="row mb-4">
             <div class="col-12">
                 <div class="card">
@@ -92,14 +100,12 @@
                             </div>
                         </div>
                     </div>
-                    <div class="card-body text-center text-muted py-3" v-else>
-                        Click "Run Diagnostics" to check system health.
-                    </div>
                 </div>
             </div>
         </div>
 
         <div class="row">
+            <!-- Left Column: Tasks -->
             <div class="col-md-7">
                 <div class="card">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center">
@@ -144,7 +150,9 @@
                 </div>
             </div>
 
+            <!-- Right Column: Manual Task, Chat, Logs -->
             <div class="col-md-5">
+                <!-- Manual Task -->
                 <div class="card">
                     <div class="card-header bg-white">
                         <h5 class="mb-0">{{ trans.manual_task }}</h5>
@@ -167,6 +175,7 @@
                     </div>
                 </div>
 
+                <!-- Chat with Wiki Brain -->
                 <div class="card mt-3">
                     <div class="card-header bg-white">
                         <h5 class="mb-0"><i class="bi bi-chat-dots"></i> {{ trans.chat_title }}</h5>
@@ -194,12 +203,16 @@
                     </div>
                 </div>
 
+                <!-- System Logs (Debug Console) -->
                 <div class="card mt-3">
-                    <div class="card-header bg-white">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">{{ trans.logs }}</h5>
+                        <small class="text-muted">Debug Mode</small>
                     </div>
-                    <div class="card-body bg-dark text-light font-monospace" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;">
-                        <div v-for="log in logs">[[ log ]]</div>
+                    <div class="card-body bg-dark text-light" style="max-height: 200px; overflow-y: auto;">
+                        <div v-for="(log, idx) in debugLogs" :key="idx" class="log-entry" :class="{'log-error': log.type === 'error', 'log-info': log.type === 'info'}">
+                            [[ log.time ]] [[ log.msg ]]
+                        </div>
                     </div>
                 </div>
             </div>
@@ -211,12 +224,11 @@
     <script>
         new Vue({
             el: '#app',
-            delimiters: ['[[', ']]'], // Jinja2との競合回避
+            delimiters: ['[[', ']]'], 
             data: {
                 // Status & Tasks
                 status: { cpu_percent: 0, memory_percent: 0, ollama_status: 'Checking...' },
                 tasks: [],
-                logs: [],
                 newTaskTopic: '',
                 newTaskPriority: 10,
                 timer: null,
@@ -228,53 +240,78 @@
 
                 // Diagnostics Data
                 isDiagLoading: false,
-                diagnosticResults: []
+                diagnosticResults: [],
+                
+                // Debug Logs
+                debugLogs: []
             },
             mounted() {
+                this.logInfo("System initialized. Fetching data...");
                 this.fetchData();
-                this.timer = setInterval(this.fetchData, 5000); // 5秒ごとに更新
+                this.timer = setInterval(this.fetchData, 5000); 
             },
             updated() {
-                // Auto scroll chat
                 const container = this.$el.querySelector("#chatContainer");
                 if(container) {
                     container.scrollTop = container.scrollHeight;
                 }
             },
             methods: {
+                logInfo(msg) {
+                    const time = new Date().toLocaleTimeString();
+                    this.debugLogs.unshift({ type: 'info', time: time, msg: msg });
+                },
+                logError(msg, err) {
+                    const time = new Date().toLocaleTimeString();
+                    let detail = "";
+                    if (err) {
+                        if (err.response) {
+                            detail = ` (Status: ${err.response.status} ${err.response.statusText})`;
+                        } else if (err.message) {
+                            detail = ` (${err.message})`;
+                        }
+                    }
+                    this.debugLogs.unshift({ type: 'error', time: time, msg: msg + detail });
+                },
+                
                 async fetchData() {
                     try {
-                        const [statusRes, tasksRes, logsRes] = await Promise.all([
+                        const [statusRes, tasksRes] = await Promise.all([
                             axios.get('/api/status'),
-                            axios.get('/api/tasks'),
-                            axios.get('/api/logs')
+                            axios.get('/api/tasks')
                         ]);
                         this.status = statusRes.data;
                         this.tasks = tasksRes.data;
-                        this.logs = logsRes.data.logs;
                     } catch (e) {
-                        console.error("Connection lost", e);
+                        // Polling errors are noisy, only log if connection is truly lost
+                        // console.error("Connection lost", e);
                     }
                 },
+                
                 async addTask() {
                     if (!this.newTaskTopic) return;
+                    this.logInfo(`Adding task: ${this.newTaskTopic}...`);
+                    
                     try {
                         await axios.post('/api/tasks', {
                             topic: this.newTaskTopic,
                             priority: parseInt(this.newTaskPriority)
                         });
+                        this.logInfo("Task added successfully.");
                         this.newTaskTopic = '';
-                        this.fetchData(); // 即座に更新
+                        this.fetchData(); 
                     } catch (e) {
-                        alert("Failed to add task.");
+                        this.logError("Failed to add task", e);
                     }
                 },
+                
                 async sendMessage() {
                     if (!this.chatInput) return;
                     const userMsg = this.chatInput;
                     this.chatHistory.push({ role: 'user', text: userMsg });
                     this.chatInput = '';
                     this.isChatLoading = true;
+                    this.logInfo("Sending chat message...");
 
                     try {
                         const res = await axios.post('/api/rag/chat', { message: userMsg });
@@ -283,21 +320,26 @@
                             text: res.data.answer,
                             sources: res.data.sources
                         });
+                        this.logInfo("Received chat response.");
                     } catch (e) {
                         this.chatHistory.push({ role: 'bot', text: "Error: Could not retrieve answer." });
+                        this.logError("Chat error", e);
                     } finally {
                         this.isChatLoading = false;
                     }
                 },
+                
                 async runDiagnostics() {
                     this.isDiagLoading = true;
-                    this.diagnosticResults = []; // クリア
+                    this.diagnosticResults = []; 
+                    this.logInfo("Running diagnostics...");
+                    
                     try {
                         const res = await axios.get('/api/diagnostics/run');
                         this.diagnosticResults = res.data.results;
+                        this.logInfo("Diagnostics complete.");
                     } catch (e) {
-                        alert("Diagnostics failed via API.");
-                        console.error(e);
+                        this.logError("Diagnostics failed", e);
                     } finally {
                         this.isDiagLoading = false;
                     }
@@ -307,3 +349,11 @@
     </script>
 </body>
 </html>
+```
+
+### 反映手順
+
+1.  上記のコードで `opt/auto-wiki/src/templates/dashboard.html` を上書き保存します。
+2.  ダッシュボードコンテナを再起動します。
+    ```bash
+    docker compose restart dashboard-ja
