@@ -72,6 +72,19 @@ class WikiScheduler:
         row = cursor.fetchone()
         
         if row:
+            # 既存タスクがある場合、もしFINISHEDならPENDINGに戻して再実行させる
+            # これにより「一度終わったけどもう一回やりたい」という再登録に対応
+            if row[1] == 'FINISHED':
+                next_run = datetime.now()
+                cursor.execute('''
+                    UPDATE tasks 
+                    SET status = 'PENDING', priority = ?, next_run = ? 
+                    WHERE id = ?
+                ''', (priority, next_run, row[0]))
+                conn.commit()
+                conn.close()
+                return True # 更新されたのでTrue扱い
+            
             conn.commit()
             conn.close()
             return False
@@ -116,9 +129,10 @@ class WikiScheduler:
         """タスクを完了状態にする"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        # 完了時は next_run をNULLにして、次回実行対象から外す
         cursor.execute('''
             UPDATE tasks 
-            SET status = 'FINISHED', last_run = ? 
+            SET status = 'FINISHED', last_run = ?, next_run = NULL 
             WHERE topic = ?
         ''', (datetime.now(), topic))
         conn.commit()
