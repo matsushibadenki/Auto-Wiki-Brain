@@ -58,7 +58,9 @@ class InformationVetter:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             )
-            vetted_text = resp.choices[0].message.content.strip()
+            # vetted_text = resp.choices[0].message.content.strip() を以下に変更
+            content = resp.choices[0].message.content
+            vetted_text = content.strip() if content else ""
             
             if "NO_INFO" in vetted_text:
                 return ""
