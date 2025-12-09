@@ -44,8 +44,9 @@ docker compose down -v
 # 2. データの削除と再作成
 echo -e "${YELLOW}🗑️  Resetting data directories...${NC}"
 
-# リセット対象のディレクトリ（削除して作り直す）
-# 注意: MediaWikiのHTMLディレクトリを確実に空にしておかないと、コンテナ起動時にファイルコピーがスキップされて404になる
+# リセット対象のディレクトリ
+# 注意: ディレクトリ自体を削除・再作成するとDockerのマウント整合性が崩れることがあるため、
+# 可能な限り「中身を空にする」処理を行う。
 dirs_to_reset=(
     "data/mediawiki_db"
     "data/mediawiki_html_ja"
@@ -57,8 +58,8 @@ dirs_to_reset=(
     "data/inputs/processed"
 )
 
-# リセット対象のファイル（削除して空ファイルを作る）
-# Dockerが誤ってディレクトリとしてマウントするのを防ぐため
+# リセット対象のファイル
+# Dockerが誤ってディレクトリとしてマウントするのを防ぐため、明示的にファイルとして再作成が必要
 files_to_reset=(
     "data/scheduler_ja.db"
     "data/scheduler_en.db"
@@ -66,13 +67,17 @@ files_to_reset=(
 
 # ディレクトリの処理
 for dir in "${dirs_to_reset[@]}"; do
-    if [ -d "$dir" ]; then
-        echo "   - Removing directory: $dir"
-        sudo rm -rf "$dir"
+    if [ ! -d "$dir" ]; then
+        echo "   - Creating directory: $dir"
+        mkdir -p -m 777 "$dir"
+    else
+        echo "   - Cleaning directory: $dir"
+        # フォルダ自体は残し、中身（隠しファイル含む）を全て削除する
+        # find -mindepth 1 -delete は確実で高速
+        sudo find "$dir" -mindepth 1 -delete 2>/dev/null || true
     fi
-    # [重要] 権限777で作成することで、コンテナ(www-data等)からの書き込みを許可する
-    echo "   - Recreating directory: $dir"
-    mkdir -p -m 777 "$dir"
+    # 権限を確実に777（誰でも書き込み可）にする
+    chmod 777 "$dir"
 done
 
 # ファイルの処理
