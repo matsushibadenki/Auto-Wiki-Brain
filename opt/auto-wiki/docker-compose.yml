@@ -1,0 +1,135 @@
+services:
+  # --- Common Infrastructure ---
+  mariadb:
+    image: mariadb:10.11
+    restart: always
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW --max_allowed_packet=1G
+    volumes:
+      - ./data/mediawiki_db:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASS}
+      - MYSQL_DATABASE=my_wiki_ja  # Default DB (Created on init)
+      - MYSQL_USER=wikiuser
+      - MYSQL_PASSWORD=${WIKI_DB_PASS}
+    networks:
+      - wiki-net
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: always
+    volumes:
+      - ./data/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - wiki-net
+
+  # --- Japanese System (Port 8080) ---
+  mediawiki-ja:
+    image: mediawiki:lts
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./data/mediawiki_html_ja:/var/www/html/
+      - ./data/mediawiki_images_ja:/var/www/html/images
+    environment:
+      - MW_DB_HOST=mariadb
+      - MW_DB_USER=wikiuser
+      - MW_DB_PASSWORD=${WIKI_DB_PASS}
+      - MW_DB_NAME=my_wiki_ja
+    depends_on:
+      - mariadb
+    networks:
+      - wiki-net
+
+  wiki-bot-ja:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    command: python src/main.py
+    volumes:
+      - ./src:/app/src
+      - ./data/chromadb_ja:/app/wiki_vector_db
+      - ./data/scheduler_ja.db:/app/scheduler.db
+    environment:
+      - WIKI_LANG=ja
+      - WIKI_HOST=mediawiki-ja:80
+      - BOT_USER=${BOT_USER}
+      - BOT_PASS=${BOT_PASS}
+      - OLLAMA_HOST=http://ollama:11434/v1
+      - MODEL_NAME=${MODEL_NAME:-gemma2}
+      - OPENAI_API_KEY=ollama
+      - TRENDS_RSS=https://trends.google.com/trends/trendingsearches/daily/rss?geo=JP
+      - PYTHONPATH=/app
+    depends_on:
+      - mediawiki-ja
+      - ollama
+    networks:
+      - wiki-net
+
+  dashboard-ja:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn src.api_server:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./src:/app/src
+      - ./data/chromadb_ja:/app/wiki_vector_db
+      - ./data/scheduler_ja.db:/app/scheduler.db
+    ports:
+      - "8000:8000"
+    environment:
+      - ADMIN_USER=${ADMIN_USER}
+      - ADMIN_PASS=${ADMIN_PASS}
+      - PYTHONPATH=/app
+    networks:
+      - wiki-net
+
+  # --- English System (Port 8081) ---
+  mediawiki-en:
+    image: mediawiki:lts
+    restart: always
+    ports:
+      - "8081:80"
+    volumes:
+      - ./data/mediawiki_html_en:/var/www/html/
+      - ./data/mediawiki_images_en:/var/www/html/images
+    environment:
+      - MW_DB_HOST=mariadb
+      - MW_DB_USER=wikiuser
+      - MW_DB_PASSWORD=${WIKI_DB_PASS}
+      - MW_DB_NAME=my_wiki_en
+    depends_on:
+      - mariadb
+    networks:
+      - wiki-net
+
+  wiki-bot-en:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    command: python src/main.py
+    volumes:
+      - ./src:/app/src
+      - ./data/chromadb_en:/app/wiki_vector_db
+      - ./data/scheduler_en.db:/app/scheduler.db
+    environment:
+      - WIKI_LANG=en
+      - WIKI_HOST=mediawiki-en:80
+      - BOT_USER=${BOT_USER}
+      - BOT_PASS=${BOT_PASS}
+      - OLLAMA_HOST=http://ollama:11434/v1
+      - MODEL_NAME=${MODEL_NAME:-gemma2}
+      - OPENAI_API_KEY=ollama
+      - TRENDS_RSS=https://trends.google.com/trends/trendingsearches/daily/rss?geo=US
+      - PYTHONPATH=/app
+    depends_on:
+      - mediawiki-en
+      - ollama
+    networks:
+      - wiki-net
+
+networks:
+  wiki-net:
+    driver: bridge
