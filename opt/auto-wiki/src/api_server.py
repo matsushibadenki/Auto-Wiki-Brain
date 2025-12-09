@@ -19,7 +19,7 @@ from src.rag.vector_store import WikiVectorDB
 app = FastAPI(
     title="Auto-Wiki Control Panel",
     description="自律型Wikiシステムの管理とRAG API",
-    version="2.0.0"
+    version="2.1.0"  # Updated version
 )
 
 templates = Jinja2Templates(directory="/app/src/templates")
@@ -28,6 +28,60 @@ security = HTTPBasic()
 # DB接続
 scheduler = WikiScheduler(db_path="/app/scheduler.db")
 vector_db = WikiVectorDB()
+
+# --- 言語設定と翻訳辞書 ---
+SYSTEM_LANG = os.getenv("WIKI_LANG", "ja")  # デフォルトは日本語
+
+TRANSLATIONS = {
+    "ja": {
+        "title": "Auto-Wiki Brain 管理パネル",
+        "cpu": "CPU使用率",
+        "memory": "メモリ",
+        "disk": "ディスク空き容量",
+        "ai_engine": "AIエンジン (Ollama)",
+        "task_queue": "タスクキュー",
+        "refresh": "更新",
+        "col_topic": "トピック",
+        "col_priority": "優先度",
+        "col_status": "ステータス",
+        "col_next": "次回実行",
+        "no_tasks": "タスクはありません。",
+        "manual_task": "手動タスク追加",
+        "label_topic": "トピック / キーワード",
+        "label_priority": "優先度",
+        "prio_high": "高 (即時)",
+        "prio_normal": "通常",
+        "btn_add": "キューに追加",
+        "logs": "システムログ",
+        "placeholder_topic": "例: GPT-5, 量子コンピュータ",
+        "badge_high": "高",
+        "badge_norm": "並"
+    },
+    "en": {
+        "title": "Auto-Wiki Brain Dashboard",
+        "cpu": "CPU Usage",
+        "memory": "Memory",
+        "disk": "Disk Free",
+        "ai_engine": "AI Engine (Ollama)",
+        "task_queue": "Task Queue",
+        "refresh": "Refresh",
+        "col_topic": "Topic",
+        "col_priority": "Priority",
+        "col_status": "Status",
+        "col_next": "Next Run",
+        "no_tasks": "No tasks found.",
+        "manual_task": "Add Manual Task",
+        "label_topic": "Topic / Keyword",
+        "label_priority": "Priority",
+        "prio_high": "High (Immediate)",
+        "prio_normal": "Normal",
+        "btn_add": "Add to Queue",
+        "logs": "System Logs",
+        "placeholder_topic": "e.g. GPT-5, Quantum Computing",
+        "badge_high": "High",
+        "badge_norm": "Normal"
+    }
+}
 
 # --- 認証ロジック ---
 def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
@@ -59,7 +113,18 @@ class SearchQuery(BaseModel):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, username: str = Depends(get_current_username)):
     """管理画面のHTMLを返す"""
-    return templates.TemplateResponse("dashboard.html", {"request": request, "username": username})
+    # 言語設定に基づいて翻訳辞書を選択
+    trans = TRANSLATIONS.get(SYSTEM_LANG, TRANSLATIONS["en"])
+    
+    return templates.TemplateResponse(
+        "dashboard.html", 
+        {
+            "request": request, 
+            "username": username,
+            "lang": SYSTEM_LANG,
+            "trans": trans
+        }
+    )
 
 @app.get("/api/status")
 def get_system_status(username: str = Depends(get_current_username)):
