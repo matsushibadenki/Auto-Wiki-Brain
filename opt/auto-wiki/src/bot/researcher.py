@@ -1,24 +1,22 @@
 # /opt/auto-wiki/src/bot/researcher.py
-# 日本語タイトル: 深層リサーチエージェント
-# 目的: 単一の検索ではなく、多角的な視点（サブトピック）で検索を行い、深く網羅的な情報を収集する
+# 日本語タイトル: 深層リサーチエージェント (Parallelized)
+# 目的: マルチスレッド化により検索速度を大幅に向上させたリサーチエージェント
 
 from duckduckgo_search import DDGS
 from openai import OpenAI
 import json
+import concurrent.futures
 
 class DeepResearcher:
     def __init__(self, client: OpenAI, model_name: str, lang: str = "ja"):
         self.client = client
         self.model_name = model_name
         self.lang = lang
-        self.ddgs = DDGS()
+        # DDGSインスタンスはスレッドセーフでない場合があるため、メソッド内で生成推奨
 
     def conduct_deep_research(self, topic: str, max_sub_topics: int = 3) -> str:
         """
-        トピックについて深層調査を行うメインメソッド
-        1. 調査計画の立案（サブトピック生成）
-        2. 各サブトピックの検索実行
-        3. 情報の統合
+        トピックについて深層調査を行うメインメソッド (並列処理版)
         """
         print(f"🕵️ Deep Researching for: {topic}")
         
@@ -28,17 +26,23 @@ class DeepResearcher:
 
         combined_results = []
         
-        # Step 2: メイントピックの検索（基本情報の確保）
-        print(f"   🔎 Searching Main Topic: {topic}")
-        main_results = self._search(topic)
-        combined_results.extend(main_results)
+        # 検索クエリのリスト作成（メイントピック + サブトピック）
+        queries = [topic] + [f"{topic} {sub}" for sub in plan]
 
-        # Step 3: サブトピックの検索（詳細情報の確保）
-        for sub_query in plan:
-            print(f"   🔎 Searching Sub-topic: {sub_query}")
-            # サブトピックはより具体的な情報を狙う
-            sub_results = self._search(f"{topic} {sub_query}")
-            combined_results.extend(sub_results)
+        # Step 2 & 3: 並列検索実行
+        print(f"   🚀 Executing {len(queries)} searches in parallel...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # 各クエリに対して _search メソッドを並列実行
+            future_to_query = {executor.submit(self._search, q): q for q in queries}
+            
+            for future in concurrent.futures.as_completed(future_to_query):
+                query = future_to_query[future]
+                try:
+                    data = future.result()
+                    combined_results.extend(data)
+                    print(f"      ✔ Finished search for: {query}")
+                except Exception as exc:
+                    print(f"      ❌ Search failed for {query}: {exc}")
 
         # Step 4: 結果の重複排除とテキスト化
         final_context = self._process_results(combined_results)
@@ -46,6 +50,7 @@ class DeepResearcher:
 
     def _create_research_plan(self, topic: str, count: int) -> list:
         """LLMを使って調査すべき「サブトピック（観点）」をリストアップする"""
+        # (ここは変更なし)
         if self.lang == "en":
             prompt = f"""
             To write a comprehensive Wikipedia article about "{topic}", what are the {count} most important sub-topics or aspects to research?
@@ -68,31 +73,27 @@ class DeepResearcher:
             raw_content = resp.choices[0].message.content
             content = raw_content.strip() if raw_content else "[]"
             
-            # JSON部分だけ抽出（Markdownタグ対策）
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0]
             
             plan = json.loads(content)
-            return plan[:count] # 指定数に制限
+            return plan[:count]
         except Exception as e:
             print(f"⚠️ Plan generation failed: {e}")
-            # フォールバック: 一般的な観点を返す
             return ["概要", "歴史", "特徴"] if self.lang == "ja" else ["Overview", "History", "Features"]
 
     def _search(self, query: str, limit: int = 5) -> list:
-        """検索を実行するヘルパー"""
+        """検索を実行するヘルパー (スレッドセーフにするため都度DDGS生成)"""
         results = []
         try:
-            # 言語設定（日米クロスサーチの簡易実装：英語圏の情報が必要ならここで分岐可能）
             region = "jp-jp" if self.lang == "ja" else "us-en"
-            
-            # DDG検索実行
-            raw_res = self.ddgs.text(query, region=region, max_results=limit)
-            if raw_res:
-                results.extend(raw_res)
-                
+            # インスタンスをここで生成してスレッド競合を防ぐ
+            with DDGS() as ddgs:
+                raw_res = ddgs.text(query, region=region, max_results=limit)
+                if raw_res:
+                    results.extend(raw_res)
         except Exception as e:
             print(f"⚠️ Search error for '{query}': {e}")
         return results
@@ -101,13 +102,12 @@ class DeepResearcher:
         """検索結果を整形・重複排除してテキスト化する"""
         seen_urls = set()
         formatted_text = ""
-        
-        # 信頼性の低いドメイン除外（簡易ブラックリスト）
         blocked_domains = ["spam.com", "example.com"] 
 
         idx = 1
         for res in raw_results:
             url = res.get('href', '')
+            # 重複URLおよびブラックリスト判定
             if url in seen_urls or any(d in url for d in blocked_domains):
                 continue
             
@@ -118,7 +118,7 @@ class DeepResearcher:
             formatted_text += f"[Source {idx}]\nTitle: {title}\nURL: {url}\nContent: {body}\n\n"
             idx += 1
             
-            if idx > 15: # コンテキストあふれ防止のため件数制限
+            if idx > 20: # 収集効率が上がったので上限を少し緩和
                 break
                 
         return formatted_text
