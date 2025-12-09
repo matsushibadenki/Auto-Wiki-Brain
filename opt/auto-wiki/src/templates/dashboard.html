@@ -149,6 +149,7 @@
                                     <td>[[ task.next_run ]]</td>
                                     <!-- 削除ボタン追加 (type="button" を明示し、debugログを追加) -->
                                     <td>
+                                        <!-- task.id が存在するか確認しやすくする -->
                                         <button type="button" class="btn btn-sm btn-outline-danger" @click.stop="deleteTask(task.id)">
                                             <i class="bi bi-trash"></i>
                                         </button>
@@ -297,6 +298,14 @@
                         this.status = statusRes.data;
                         this.tasks = tasksRes.data;
                         
+                        // Debug: 取得したタスクデータの確認
+                        if (this.tasks && this.tasks.length > 0) {
+                            // 最初のタスクにIDがあるかチェック
+                            if (this.tasks[0].id === undefined) {
+                                console.warn("Warning: Task ID is missing from API response!", this.tasks[0]);
+                            }
+                        }
+                        
                         // サーバーサイドからのログをマージ（必要なら）
                     } catch (e) {
                     }
@@ -330,7 +339,9 @@
                     
                     // IDが取得できていない場合のアラート
                     if (taskId === undefined || taskId === null) {
-                        alert("Error: Task ID is undefined. Please refresh the page (Shift+F5). If this persists, the API might not be returning IDs.");
+                        // オブジェクトごとダンプして確認させる
+                        console.error("Undefined Task ID. Current tasks:", this.tasks);
+                        alert("Error: Task ID is undefined. Check console log for details.");
                         return;
                     }
 
