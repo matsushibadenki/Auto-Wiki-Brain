@@ -115,7 +115,14 @@ class DeepResearcher:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             )
-            content = resp.choices[0].message.content.strip()
+            
+            # --- 修正: contentがNoneの場合をガード ---
+            raw_content = resp.choices[0].message.content
+            if not raw_content:
+                return []
+            content = raw_content.strip()
+            # -------------------------------------
+
             # Markdownタグの除去
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
