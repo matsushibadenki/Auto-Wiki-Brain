@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ trans.title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body { background-color: #f8f9fa; }
+        .card { box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; }
+        .status-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .status-online { background-color: #28a745; }
+        .status-offline { background-color: #dc3545; }
+        .status-running { background-color: #ffc107; }
+        
+        /* Chat Styles */
+        .chat-box { height: 300px; overflow-y: auto; background-color: #f1f3f5; border-radius: 5px; padding: 10px; }
+        .chat-msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 15px; max-width: 80%; word-wrap: break-word; }
+        .msg-user { background-color: #007bff; color: white; margin-left: auto; }
+        .msg-bot { background-color: #e9ecef; color: black; margin-right: auto; }
+        .source-badge { font-size: 0.75rem; opacity: 0.8; display: block; margin-top: 4px; color: #6c757d; }
+        
+        /* Debug Log Styles */
+        .log-entry { font-family: monospace; font-size: 0.8rem; border-bottom: 1px solid #444; padding: 2px 0; }
+        .log-error { color: #ff6b6b; }
+        .log-info { color: #4ecdc4; }
+    </style>
+</head>
+<body>
+    <div id="app" class="container py-4">
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3"><i class="bi bi-robot"></i> {{ trans.title }}</h1>
+            <div>
+                <!-- Wiki Link Button -->
+                <a href="http://localhost:8080" target="_blank" class="btn btn-outline-dark me-2">
+                    <i class="bi bi-book"></i> Open Wiki
+                </a>
+                <span class="badge bg-secondary">User: {{ username }}</span>
+            </div>
+        </div>
+
+        <!-- System Status Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
+                    <h6 class="text-muted">{{ trans.cpu }}</h6>
+                    <h3 class="mb-0">[[ status.cpu_percent ]]%</h3>
+                </div>
+            </div>
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
+                    <h6 class="text-muted">{{ trans.memory }}</h6>
+                    <h3 class="mb-0">[[ status.memory_percent ]]%</h3>
+                    <small>[[ status.memory_used_gb ]]GB / [[ status.memory_total_gb ]]GB</small>
+                </div>
+            </div>
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
+                    <h6 class="text-muted">{{ trans.disk }}</h6>
+                    <h3 class="mb-0">[[ status.disk_free_gb ]]GB</h3>
+                </div>
+            </div>
+            <div class="col-md-3 d-flex">
+                <div class="card p-3 w-100 h-100 d-flex flex-column justify-content-center">
+                    <h6 class="text-muted">{{ trans.ai_engine }}</h6>
+                    <h3 class="mb-0">
+                        <span class="status-indicator" :class="status.ollama_status === 'Online' ? 'status-online' : 'status-offline'"></span>
+                        [[ status.ollama_status ]]
+                    </h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Health & Diagnostics -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="bi bi-heart-pulse"></i> System Health Check</h5>
+                        <button class="btn btn-sm btn-outline-success" @click="runDiagnostics" :disabled="isDiagLoading">
+                            <span v-if="isDiagLoading" class="spinner-border spinner-border-sm"></span>
+                            <span v-else><i class="bi bi-play-circle"></i> Run Diagnostics</span>
+                        </button>
+                    </div>
+                    <div class="card-body" v-if="diagnosticResults.length > 0">
+                        <div class="row">
+                            <div class="col-md-3 mb-2" v-for="(res, index) in diagnosticResults" :key="index">
+                                <div class="p-3 border rounded d-flex align-items-center h-100" 
+                                     :class="{
+                                         'bg-light': res.status === 'OK',
+                                         'bg-warning-subtle': res.status === 'WARN',
+                                         'bg-danger-subtle': res.status === 'FAIL'
+                                     }">
+                                    <div class="me-3 fs-4">
+                                        <i class="bi bi-check-circle-fill text-success" v-if="res.status === 'OK'"></i>
+                                        <i class="bi bi-exclamation-triangle-fill text-warning" v-if="res.status === 'WARN'"></i>
+                                        <i class="bi bi-x-circle-fill text-danger" v-if="res.status === 'FAIL'"></i>
+                                    </div>
+                                    <div>
+                                        <div class="fw-bold">[[ res.name ]]</div>
+                                        <small class="text-muted">[[ res.msg ]]</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Left Column: Tasks -->
+            <div class="col-md-7">
+                <div class="card h-100">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">{{ trans.task_queue }}</h5>
+                        <button class="btn btn-sm btn-outline-primary" @click="fetchTasks"><i class="bi bi-arrow-clockwise"></i> {{ trans.refresh }}</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{{ trans.col_topic }}</th>
+                                    <th>{{ trans.col_priority }}</th>
+                                    <th>{{ trans.col_status }}</th>
+                                    <th>{{ trans.col_next }}</th>
+                                    <th>{{ trans.col_action }}</th> <!-- Action列追加 -->
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="task in tasks" :key="task.topic">
+                                    <td class="fw-bold">[[ task.topic ]]</td>
+                                    <td>
+                                        <span class="badge bg-info" v-if="task.priority >= 8">{{ trans.badge_high }}</span>
+                                        <span class="badge bg-secondary" v-else>{{ trans.badge_norm }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="badge" 
+                                            :class="{
+                                                'bg-warning text-dark': task.status === 'RUNNING',
+                                                'bg-success': task.status === 'FINISHED',
+                                                'bg-secondary': task.status === 'PENDING'
+                                            }">
+                                            [[ task.status ]]
+                                        </span>
+                                    </td>
+                                    <td>[[ task.next_run ]]</td>
+                                    <!-- 削除ボタン追加 (type="button" を明示し、debugログを追加) -->
+                                    <td>
+                                        <!-- task.id が存在するか確認しやすくする -->
+                                        <button type="button" class="btn btn-sm btn-outline-warning me-2" @click.stop="regenerateTask(task.topic)" title="Re-generate Article">
+                                            <i class="bi bi-arrow-repeat"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" @click.stop="deleteTask(task.id)">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                <tr v-if="tasks.length === 0">
+                                    <td colspan="5" class="text-center text-muted py-3">{{ trans.no_tasks }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Manual Task, Chat, Logs -->
+            <div class="col-md-5">
+                <!-- Manual Task -->
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0">{{ trans.manual_task }}</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">{{ trans.label_topic }}</label>
+                            <input type="text" class="form-control" v-model="newTaskTopic" placeholder="{{ trans.placeholder_topic }}" @keyup.enter="addTask">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">{{ trans.label_priority }}</label>
+                            <select class="form-select" v-model="newTaskPriority">
+                                <option value="10">{{ trans.prio_high }}</option>
+                                <option value="5">{{ trans.prio_normal }}</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary w-100" @click="addTask" :disabled="!newTaskTopic">
+                            <i class="bi bi-plus-circle"></i> {{ trans.btn_add }}
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Chat with Wiki Brain -->
+                <div class="card mt-3">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0"><i class="bi bi-chat-dots"></i> {{ trans.chat_title }}</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chat-box mb-3" id="chatContainer">
+                            <div v-for="(msg, index) in chatHistory" :key="index" class="d-flex w-100">
+                                <div class="chat-msg" :class="msg.role === 'user' ? 'msg-user' : 'msg-bot'">
+                                    [[ msg.text ]]
+                                    <span v-if="msg.sources" class="source-badge">
+                                        Ref: [[ msg.sources.join(', ') ]]
+                                    </span>
+                                </div>
+                            </div>
+                            <div v-if="isChatLoading" class="text-center text-muted">
+                                <div class="spinner-border spinner-border-sm" role="status"></div> Thinking...
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <input type="text" class="form-control" v-model="chatInput" placeholder="{{ trans.chat_placeholder }}" @keyup.enter="sendMessage">
+                            <button class="btn btn-outline-primary" @click="sendMessage" :disabled="!chatInput || isChatLoading">
+                                <i class="bi bi-send"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Logs (Debug Console) -->
+                <div class="card mt-3">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">{{ trans.logs }}</h5>
+                        <small class="text-muted">Debug Mode</small>
+                    </div>
+                    <div class="card-body bg-dark text-light" style="max-height: 200px; overflow-y: auto;">
+                        <div v-for="(log, idx) in debugLogs" :key="idx" class="log-entry" :class="{'log-error': log.type === 'error', 'log-info': log.type === 'info'}">
+                            [[ log.time ]] [[ log.msg ]]
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        new Vue({
+            el: '#app',
+            delimiters: ['[[', ']]'], 
+            data: {
+                // Status & Tasks
+                status: { cpu_percent: 0, memory_percent: 0, ollama_status: 'Checking...' },
+                tasks: [],
+                newTaskTopic: '',
+                newTaskPriority: 10,
+                timer: null,
+
+                // Chat Data
+                chatInput: '',
+                chatHistory: [],
+                isChatLoading: false,
+
+                // Diagnostics Data
+                isDiagLoading: false,
+                diagnosticResults: [],
+                
+                // Debug Logs
+                debugLogs: []
+            },
+            mounted() {
+                this.logInfo("System initialized. Fetching data...");
+                this.fetchData();
+                this.timer = setInterval(this.fetchData, 5000); 
+            },
+            updated() {
+                const container = this.$el.querySelector("#chatContainer");
+                if(container) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            },
+            methods: {
+                logInfo(msg) {
+                    const time = new Date().toLocaleTimeString();
+                    this.debugLogs.unshift({ type: 'info', time: time, msg: msg });
+                },
+                logError(msg, err) {
+                    const time = new Date().toLocaleTimeString();
+                    let detail = "";
+                    if (err) {
+                        if (err.response) {
+                            detail = ` (Status: ${err.response.status} ${err.response.statusText})`;
+                        } else if (err.message) {
+                            detail = ` (${err.message})`;
+                        }
+                    }
+                    this.debugLogs.unshift({ type: 'error', time: time, msg: msg + detail });
+                },
+                
+                async fetchData() {
+                    try {
+                        const [statusRes, tasksRes, logsRes] = await Promise.all([
+                            axios.get('/api/status'),
+                            axios.get('/api/tasks'),
+                            axios.get('/api/logs')
+                        ]);
+                        this.status = statusRes.data;
+                        this.tasks = tasksRes.data;
+                        
+                        // Debug: 取得したタスクデータの確認
+                        if (this.tasks && this.tasks.length > 0) {
+                            // 最初のタスクにIDがあるかチェック
+                            if (this.tasks[0].id === undefined) {
+                                console.warn("Warning: Task ID is missing from API response!", this.tasks[0]);
+                            }
+                        }
+                        
+                        // サーバーサイドからのログをマージ（必要なら）
+                    } catch (e) {
+                    }
+                },
+                
+                async fetchTasks() {
+                    this.logInfo("Refreshing task queue...");
+                    await this.fetchData();
+                },
+                
+                async addTask() {
+                    if (!this.newTaskTopic) return;
+                    this.logInfo(`Adding task: ${this.newTaskTopic}...`);
+                    
+                    try {
+                        await axios.post('/api/tasks', {
+                            topic: this.newTaskTopic,
+                            priority: parseInt(this.newTaskPriority)
+                        });
+                        this.logInfo("Task added successfully.");
+                        this.newTaskTopic = '';
+                        this.fetchData(); 
+                    } catch (e) {
+                        this.logError("Failed to add task", e);
+                    }
+                },
+
+                // --- 追加: タスク削除メソッド (デバッグ強化版) ---
+                async regenerateTask(topic) {
+                    if (!confirm(`Are you sure you want to RE-GENERATE the article for "${topic}"?\nExisting content will be overwritten.`)) return;
+                    
+                    this.logInfo(`Requesting re-generation for: ${topic}...`);
+                    try {
+                        await axios.post('/api/regenerate', { topic: topic });
+                        this.logInfo("Re-generation task added.");
+                        await this.fetchTasks();
+                    } catch (e) {
+                        this.logError("Failed to trigger re-generation", e);
+                        alert("Re-generation failed. Check console.");
+                    }
+                },
+
+                async deleteTask(taskId) {
+                    console.log("Delete button clicked. Task ID:", taskId);
+                    
+                    // IDが取得できていない場合のアラート
+                    if (taskId === undefined || taskId === null) {
+                        // オブジェクトごとダンプして確認させる
+                        console.error("Undefined Task ID. Current tasks:", this.tasks);
+                        alert("Error: Task ID is undefined. Check console log for details.");
+                        return;
+                    }
+
+                    if (!confirm(`Are you sure you want to delete Task ID: ${taskId}?`)) return;
+                    
+                    this.logInfo(`Deleting task ID: ${taskId}...`);
+                    try {
+                        const res = await axios.delete(`/api/tasks/${taskId}`);
+                        console.log("API Response:", res);
+                        this.logInfo("Task deleted successfully.");
+                        await this.fetchData(); // リスト更新
+                    } catch (e) {
+                        console.error(e);
+                        this.logError("Failed to delete task. (Check Console)", e);
+                        alert("Delete failed. See console for error details.");
+                    }
+                },
+                
+                async sendMessage() {
+                    if (!this.chatInput) return;
+                    const userMsg = this.chatInput;
+                    this.chatHistory.push({ role: 'user', text: userMsg });
+                    this.chatInput = '';
+                    this.isChatLoading = true;
+                    this.logInfo("Sending chat message...");
+
+                    try {
+                        const res = await axios.post('/api/rag/chat', { message: userMsg });
+                        this.chatHistory.push({
+                            role: 'bot',
+                            text: res.data.answer,
+                            sources: res.data.sources
+                        });
+                        this.logInfo("Received chat response.");
+                    } catch (e) {
+                        this.chatHistory.push({ role: 'bot', text: "Error: Could not retrieve answer." });
+                        this.logError("Chat error", e);
+                    } finally {
+                        this.isChatLoading = false;
+                    }
+                },
+                
+                async runDiagnostics() {
+                    this.isDiagLoading = true;
+                    this.diagnosticResults = []; 
+                    this.logInfo("Running diagnostics...");
+                    
+                    try {
+                        const res = await axios.get('/api/diagnostics/run');
+                        this.diagnosticResults = res.data.results;
+                        this.logInfo("Diagnostics complete.");
+                    } catch (e) {
+                        this.logError("Diagnostics failed", e);
+                    } finally {
+                        this.isDiagLoading = false;
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

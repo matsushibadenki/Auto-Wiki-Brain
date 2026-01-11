@@ -1,0 +1,14 @@
+# Database Passwords (CHANGE THESE!)
+DB_ROOT_PASS=super_secure_root_password
+WIKI_DB_PASS=wiki_db_password
+
+# Wiki Bot Account
+BOT_USER=AdminBot
+BOT_PASS=bot_wiki_password
+
+# Dashboard Auth
+ADMIN_USER=admin
+ADMIN_PASS=secret_dashboard_pass
+
+# AI Model (gemma2, llama3, etc. pulled in ollama)
+MODEL_NAME=gemma3
