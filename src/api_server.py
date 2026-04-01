@@ -121,7 +121,16 @@ async def root():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, username: str = Depends(get_current_username)):
     trans = TRANSLATIONS.get(SYSTEM_LANG, TRANSLATIONS["en"])
-    return templates.TemplateResponse("dashboard.html", {"request": request, "username": username, "lang": SYSTEM_LANG, "trans": trans})
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={
+            "request": request,
+            "username": username,
+            "lang": SYSTEM_LANG,
+            "trans": trans,
+        },
+    )
 
 @app.get("/api/status")
 def get_system_status(username: str = Depends(get_current_username)):
