@@ -20,6 +20,7 @@ class DualLogger(object):
     def __init__(self):
         self.terminal = sys.stdout
         self.log = open("/app/src/bot.log", "a", encoding="utf-8")
+        self.encoding = getattr(self.terminal, "encoding", "utf-8")
     
     def write(self, message):
         self.terminal.write(message)
@@ -30,6 +31,17 @@ class DualLogger(object):
         self.terminal.flush()
         self.log.flush()
 
+    def isatty(self):
+        return bool(getattr(self.terminal, "isatty", lambda: False)())
+
+    def fileno(self):
+        if hasattr(self.terminal, "fileno"):
+            return self.terminal.fileno()
+        raise OSError("Underlying stream does not expose fileno()")
+
+    def writable(self):
+        return True
+
 sys.stdout = DualLogger()
 
 def main():
@@ -39,7 +51,7 @@ def main():
     WIKI_HOST = os.getenv("WIKI_HOST", "mediawiki:80")
     BOT_USER = os.getenv("BOT_USER", "AdminBot")
     BOT_PASS = os.getenv("BOT_PASS", "password")
-    MODEL_NAME = os.getenv("MODEL_NAME", "gemma2")
+    MODEL_NAME = os.getenv("MODEL_NAME", "gemma3")
     OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434/v1")
     TRENDS_RSS = os.getenv("TRENDS_RSS", "https://trends.google.com/trends/trendingsearches/daily/rss?geo=JP")
     
@@ -91,8 +103,11 @@ def main():
             task_topic = scheduler.get_next_task()
             if task_topic:
                 print(f"▶ PROCESSING: {task_topic}")
-                bot.update_article(task_topic)
-                scheduler.complete_task(task_topic)
+                success = bot.update_article(task_topic)
+                if success:
+                    scheduler.complete_task(task_topic)
+                else:
+                    scheduler.fail_task(task_topic)
                 
                 # 【修正】クールダウンを30秒から1秒に短縮
                 # 次のタスクがあれば即座に取り掛かる

@@ -147,7 +147,7 @@ MEDIAWIKI_PASS=your_bot_password
 
 # Ollama settings
 OLLAMA_HOST=http://ollama:11434
-OLLAMA_MODEL=gemma2:9b
+OLLAMA_MODEL=gemma3
 
 # Dashboard authentication
 ADMIN_USER=admin
@@ -393,7 +393,7 @@ MEDIAWIKI_PASS=your_bot_password
 
 # Ollama設定
 OLLAMA_HOST=http://ollama:11434
-OLLAMA_MODEL=gemma2:9b
+OLLAMA_MODEL=gemma3
 
 # ダッシュボード認証
 ADMIN_USER=admin

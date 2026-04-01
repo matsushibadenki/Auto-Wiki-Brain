@@ -28,7 +28,7 @@ diagnostics = SystemDiagnostics()
 
 # LLM接続
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "gemma2")
+MODEL_NAME = os.getenv("MODEL_NAME", "gemma3")
 llm_client = OpenAI(base_url=OLLAMA_HOST, api_key="ollama")
 
 SYSTEM_LANG = os.getenv("WIKI_LANG", "ja")

@@ -27,7 +27,7 @@ class WikiScheduler:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 topic TEXT UNIQUE NOT NULL,
                 priority INTEGER DEFAULT 5,
-                status TEXT DEFAULT 'PENDING',  -- PENDING, RUNNING, FINISHED
+                status TEXT DEFAULT 'PENDING',  -- PENDING, RUNNING, FINISHED, FAILED
                 next_run TIMESTAMP,
                 last_run TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -182,6 +182,19 @@ class WikiScheduler:
         conn.commit()
         conn.close()
 
+    def fail_task(self, topic: str, retry_delay_minutes: int = 30):
+        """タスクを失敗状態として記録し、後で再試行できるようにする"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        next_run = datetime.now() + timedelta(minutes=retry_delay_minutes)
+        cursor.execute('''
+            UPDATE tasks
+            SET status = 'FAILED', last_run = ?, next_run = ?
+            WHERE topic = ?
+        ''', (datetime.now(), next_run, topic))
+        conn.commit()
+        conn.close()
+
     def get_recent_tasks(self, limit: int = 50) -> list:
         """
         管理画面用：タスク一覧を取得する
@@ -196,7 +209,8 @@ class WikiScheduler:
                 CASE status
                     WHEN 'RUNNING' THEN 1
                     WHEN 'PENDING' THEN 2
-                    ELSE 3
+                    WHEN 'FAILED' THEN 3
+                    ELSE 4
                 END,
                 next_run ASC
             LIMIT ?

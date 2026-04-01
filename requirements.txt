@@ -1,0 +1,14 @@
+mwclient
+openai
+chromadb
+ddgs
+feedparser
+schedule
+fastapi
+uvicorn
+sentence-transformers
+mwxml
+pytrends
+psutil
+jinja2
+python-multipart

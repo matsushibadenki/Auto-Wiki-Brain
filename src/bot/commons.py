@@ -18,13 +18,28 @@ class CommonsAgent:
         try:
             # File名前空間(6)で検索
             search_gen = self.site.search(topic, namespace=6)
-            for i, page in enumerate(search_gen):
-                if i >= limit: break
-                if page.name.endswith(('.jpg', '.png', '.svg', '.jpeg')):
-                    results.append(page.name)
+            for page in search_gen:
+                file_name = self._extract_file_name(page)
+                if not file_name:
+                    continue
+                if len(results) >= limit:
+                    break
+                lower_name = file_name.lower()
+                if lower_name.endswith(('.jpg', '.png', '.svg', '.jpeg', '.webp')):
+                    results.append(file_name)
         except Exception as e:
             print(f"⚠️ Commons search error: {e}")
         return results
+
+    def _extract_file_name(self, page) -> str | None:
+        """mwclient.search が返す Page / dict の両方に対応する"""
+        if hasattr(page, "name"):
+            return page.name
+        if isinstance(page, dict):
+            title = page.get("title") or page.get("name")
+            if isinstance(title, str):
+                return title
+        return None
 
     def select_best_image(self, topic: str, images: list) -> str | None:
         """検索結果の中から記事に最適な画像をLLMに選ばせる"""

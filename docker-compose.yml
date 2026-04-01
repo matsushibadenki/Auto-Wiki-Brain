@@ -2,7 +2,7 @@ services:
   # --- Common Infrastructure ---
   mariadb:
     image: mariadb:10.11
-    restart: always
+    # restart: always
     command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW --max_allowed_packet=1G
     volumes:
       - ./data/mediawiki_db:/var/lib/mysql
@@ -16,7 +16,7 @@ services:
 
   ollama:
     image: ollama/ollama:latest
-    restart: always
+    # restart: always
     volumes:
       - ./data/ollama:/root/.ollama
     ports:
@@ -27,7 +27,7 @@ services:
   # --- Japanese System (Port 8080) ---
   mediawiki-ja:
     image: mediawiki:lts
-    restart: always
+    # restart: always
     ports:
       - "8080:80"
     volumes:
@@ -60,7 +60,7 @@ services:
       - BOT_USER=${BOT_USER}
       - BOT_PASS=${BOT_PASS}
       - OLLAMA_HOST=http://ollama:11434/v1
-      - MODEL_NAME=${MODEL_NAME:-gemma2}
+      - MODEL_NAME=${MODEL_NAME:-gemma3}
       - OPENAI_API_KEY=ollama
       - TRENDS_RSS=https://trends.google.com/trends/trendingsearches/daily/rss?geo=JP
       - PYTHONPATH=/app
@@ -97,7 +97,7 @@ services:
   # --- English System (Port 8081) ---
   mediawiki-en:
     image: mediawiki:lts
-    restart: always
+    # restart: always
     ports:
       - "8081:80"
     volumes:
@@ -129,7 +129,7 @@ services:
       - BOT_USER=${BOT_USER}
       - BOT_PASS=${BOT_PASS}
       - OLLAMA_HOST=http://ollama:11434/v1
-      - MODEL_NAME=${MODEL_NAME:-gemma2}
+      - MODEL_NAME=${MODEL_NAME:-gemma3}
       - OPENAI_API_KEY=ollama
       - TRENDS_RSS=https://trends.google.com/trends/trendingsearches/daily/rss?geo=US
       - PYTHONPATH=/app

@@ -25,6 +25,11 @@
         .log-entry { font-family: monospace; font-size: 0.8rem; border-bottom: 1px solid #444; padding: 2px 0; }
         .log-error { color: #ff6b6b; }
         .log-info { color: #4ecdc4; }
+        .task-status { color: #fff; }
+        .task-status-pending { background-color: #6c757d; }
+        .task-status-running { background-color: #ffc107; color: #212529; }
+        .task-status-finished { background-color: #198754; }
+        .task-status-failed { background-color: #dc3545; }
     </style>
 </head>
 <body>
@@ -137,11 +142,12 @@
                                         <span class="badge bg-secondary" v-else>{{ trans.badge_norm }}</span>
                                     </td>
                                     <td>
-                                        <span class="badge" 
+                                        <span class="badge task-status"
                                             :class="{
-                                                'bg-warning text-dark': task.status === 'RUNNING',
-                                                'bg-success': task.status === 'FINISHED',
-                                                'bg-secondary': task.status === 'PENDING'
+                                                'task-status-running': task.status === 'RUNNING',
+                                                'task-status-finished': task.status === 'FINISHED',
+                                                'task-status-pending': task.status === 'PENDING',
+                                                'task-status-failed': task.status === 'FAILED'
                                             }">
                                             [[ task.status ]]
                                         </span>
